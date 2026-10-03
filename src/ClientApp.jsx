@@ -9,7 +9,7 @@ export default function ClientApp() {
   const [searchTerm, setSearchTerm] = useState('');
 
   // OFFICIAL LINKS & HANDLES
-  const WHATSAPP_NUMBER = '2250100130109';
+  const WHATSAPP_NUMBER = '2250759322034';
   const FACEBOOK_URL = 'https://facebook.com/profile.php?id=61590626370497';
   const TIKTOK_URL = 'https://tiktok.com/@your-profile';
 
@@ -72,7 +72,7 @@ export default function ClientApp() {
 
   const handleWhatsAppCheckout = () => {
     if (cart.length === 0) return;
-    let msg = '✨ *DONCHIKE COSMETICS - NOUVELLE COMMANDE* ✨\n------------------------------------------\n\n';
+    let msg = '✨ *Leroide La Sape - NOUVELLE COMMANDE* ✨\n------------------------------------------\n\n';
     cart.forEach((item, idx) => {
       msg += `🛍️ *${idx + 1}. ${item.name}*\n  Prix: ${item.price.toLocaleString()} FCFA\n  Qté: ${item.quantity}\n------------------------------------------\n`;
     });
@@ -100,8 +100,8 @@ export default function ClientApp() {
               </svg>
             </div>
             <div className="flex flex-col justify-center">
-              <span className="font-black text-base sm:text-xl tracking-wider uppercase text-zinc-900 leading-none group-hover:text-amber-600 transition-colors">DONCHIKE</span>
-              <span className="text-[10px] sm:text-[11px] font-bold text-amber-500 tracking-[0.25em] uppercase leading-tight mt-0.5">COSMETICS</span>
+              <span className="font-black text-base sm:text-xl tracking-wider uppercase text-zinc-900 leading-none group-hover:text-amber-600 transition-colors">Leroide </span>
+              <span className="text-[10px] sm:text-[11px] font-bold text-amber-500 tracking-[0.25em] uppercase leading-tight mt-0.5">La Sape</span>
             </div>
           </div>
 
@@ -127,7 +127,7 @@ export default function ClientApp() {
         <div className="bg-gradient-to-r from-zinc-950 via-zinc-900 to-amber-950 text-white rounded-2xl p-6 md:p-8 mb-6 border border-zinc-800 flex flex-col md:flex-row justify-between items-center">
           <div>
             <span className="bg-[#f68b1e]/10 text-[#f68b1e] text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full border border-[#f68b1e]/20">✨ Meilleure Expérience d'Achat</span>
-            <h1 className="text-xl md:text-3xl font-black mt-2.5 tracking-tight">Collection Don Chike Cosmetics</h1>
+            <h1 className="text-xl md:text-3xl font-black mt-2.5 tracking-tight">Collection Leroide La Sape</h1>
             <p className="text-zinc-400 text-xs mt-1">Sélectionnez vos articles et passez votre commande instantanément via WhatsApp.</p>
           </div>
           <div className="bg-white/5 px-4 py-2.5 rounded-xl border border-white/10 mt-4 md:mt-0">
@@ -181,7 +181,7 @@ export default function ClientApp() {
                   <div className="p-3 flex-1 flex flex-col justify-between bg-white">
                     <div>
                       <div className="flex items-center space-x-1 mb-1">
-                        <span className="font-extrabold text-xs text-zinc-900 group-hover:text-[#f68b1e] transition-colors">DONCHIKE</span>
+                        <span className="font-extrabold text-xs text-zinc-900 group-hover:text-[#f68b1e] transition-colors">La Sape</span>
                         <span className="text-blue-500 text-[10px] font-bold">✔</span>
                       </div>
                       <h3 className="text-sm md:text-base text-black line-clamp-2 min-h-[2.5rem] leading-tight font-extrabold">
