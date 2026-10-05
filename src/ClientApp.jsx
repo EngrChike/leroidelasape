@@ -7,7 +7,10 @@ export default function ClientApp() {
   const [cart, setCart] = useState([]);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedBranch, setSelectedBranch] = useState('Tous');
+  
+  // NEW: State for the globally active branch
+  const [storeBranch, setStoreBranch] = useState('Siège Principal');
+  const [isLoading, setIsLoading] = useState(true);
 
   // OFFICIAL LINKS & HANDLES
   const WHATSAPP_NUMBER = '2250759322034';
@@ -15,23 +18,45 @@ export default function ClientApp() {
   const TIKTOK_URL = 'https://tiktok.com/@your-profile';
 
   useEffect(() => {
-    fetchProducts();
+    fetchActiveBranchAndProducts();
   }, []);
 
-  const fetchProducts = async () => {
+  const fetchActiveBranchAndProducts = async () => {
+    setIsLoading(true);
+    let activeBranch = 'Siège Principal'; // Default fallback
+
     try {
-      // Exclude archived items and items with 0 stock from the client storefront
+      // 1. Check if the Admin has set an active branch in store_settings
+      const { data: settingsData, error: settingsError } = await supabase
+        .from('store_settings')
+        .select('active_branch')
+        .single();
+
+      if (!settingsError && settingsData && settingsData.active_branch) {
+        activeBranch = settingsData.active_branch;
+      }
+    } catch (err) {
+      console.log("No store settings found, defaulting to Siège Principal.");
+    }
+
+    setStoreBranch(activeBranch);
+
+    try {
+      // 2. Fetch ONLY products for this specific active branch
       const { data, error } = await supabase
         .from('products')
         .select('*')
         .eq('is_archived', false)
         .gt('quantity', 0)
+        .eq('branch', activeBranch) // Locked to the selected branch
         .order('created_at', { ascending: false });
       
       if (!error && data) setProducts(data);
     } catch (err) {
       console.error("Erreur de récupération: ", err);
     }
+    
+    setIsLoading(false);
   };
 
   const addToCart = (product) => {
@@ -73,33 +98,28 @@ export default function ClientApp() {
 
   const handleWhatsAppCheckout = () => {
     if (cart.length === 0) return;
-    let msg = '✨ *Leroide La Sape - NOUVELLE COMMANDE* ✨\n------------------------------------------\n\n';
+    let msg = `✨ *Leroide La Sape - NOUVELLE COMMANDE (${storeBranch})* ✨\n------------------------------------------\n\n`;
     cart.forEach((item, idx) => {
-      msg += `🛍️ *${idx + 1}. ${item.name}* ${item.branch ? `(${item.branch})` : ''}\n  Prix: ${item.price.toLocaleString()} FCFA\n  Qté: ${item.quantity}\n------------------------------------------\n`;
+      msg += `🛍️ *${idx + 1}. ${item.name}*\n  Prix: ${item.price.toLocaleString()} FCFA\n  Qté: ${item.quantity}\n------------------------------------------\n`;
     });
     msg += `\n🎯 *TOTAL GÉNÉRAL:* ${cartTotal.toLocaleString()} FCFA\n\nMerci de confirmer la disponibilité pour expédition immédiate !`;
     window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
-  // Extract unique branches dynamically from products
-  const availableBranches = ['Tous', ...new Set(products.map(p => p.branch).filter(Boolean))];
-
+  // Only filter by Search Term now, as the Database handles the Branch filtering
   const filteredProducts = products.filter(product => {
     const pName = product.name ? product.name.toLowerCase() : '';
     const pDesc = product.description ? product.description.toLowerCase() : '';
     const query = searchTerm.toLowerCase();
     
-    const matchesSearch = pName.includes(query) || pDesc.includes(query);
-    const matchesBranch = selectedBranch === 'Tous' || !product.branch || product.branch === selectedBranch;
-
-    return matchesSearch && matchesBranch;
+    return pName.includes(query) || pDesc.includes(query);
   });
 
   return (
     <div className="min-h-screen bg-[#f5f5f7] text-gray-900 font-sans antialiased relative">
       <header className="bg-white text-black sticky top-0 z-40 shadow-sm border-b border-gray-100 px-4 py-3">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div className="flex items-center space-x-2.5 cursor-pointer shrink-0 group select-none" onClick={() => { setSearchTerm(''); setSelectedBranch('Tous'); }}>
+          <div className="flex items-center space-x-2.5 cursor-pointer shrink-0 group select-none" onClick={() => setSearchTerm('')}>
             <div className="w-9 h-9 sm:w-10 sm:h-10 bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600 rounded-xl flex items-center justify-center shadow-md p-1.5">
               <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full text-white">
                 <path d="M30 25 C30 25, 45 15, 50 15 C55 15, 70 25, 70 25 C70 45, 60 75, 50 85 C40 75, 30 45, 30 25 Z" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
@@ -134,9 +154,13 @@ export default function ClientApp() {
       <main className="max-w-7xl w-full mx-auto p-4 md:py-8">
         <div className="bg-gradient-to-r from-zinc-950 via-zinc-900 to-amber-950 text-white rounded-2xl p-6 md:p-8 mb-6 border border-zinc-800 flex flex-col md:flex-row justify-between items-center">
           <div>
-            <span className="bg-[#f68b1e]/10 text-[#f68b1e] text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full border border-[#f68b1e]/20">✨ Meilleure Expérience d'Achat</span>
-            <h1 className="text-xl md:text-3xl font-black mt-2.5 tracking-tight">Collection Leroide La Sape</h1>
-            <p className="text-zinc-400 text-xs mt-1">Sélectionnez vos articles par succursale et passez votre commande instantanément via WhatsApp.</p>
+            <div className="flex items-center gap-2 mb-2.5">
+              <span className="bg-[#f68b1e]/10 text-[#f68b1e] text-[11px] font-bold uppercase tracking-wider px-3 py-1 rounded-full border border-[#f68b1e]/20 flex items-center gap-1">
+                <MapPin className="w-3 h-3" /> Boutique: {storeBranch}
+              </span>
+            </div>
+            <h1 className="text-xl md:text-3xl font-black tracking-tight">Collection Leroide La Sape</h1>
+            <p className="text-zinc-400 text-xs mt-1">Passez votre commande instantanément via WhatsApp pour notre boutique de {storeBranch}.</p>
           </div>
           <div className="bg-white/5 px-4 py-2.5 rounded-xl border border-white/10 mt-4 md:mt-0">
             <p className="text-[10px] text-zinc-400 uppercase tracking-wider">Livraison Rapide</p>
@@ -146,7 +170,7 @@ export default function ClientApp() {
           </div>
         </div>
 
-        {/* SEARCH & BRANCH FILTER BAR */}
+        {/* SEARCH BAR */}
         <div className="max-w-xl mx-auto mb-8 space-y-3 px-1">
           <div className="relative flex items-center">
             <Search className="w-4 h-4 text-gray-400 absolute left-3.5 pointer-events-none" />
@@ -163,33 +187,15 @@ export default function ClientApp() {
               </button>
             )}
           </div>
-
-          {/* Branch Filter Selector Pills */}
-          {availableBranches.length > 2 && (
-            <div className="flex items-center justify-center flex-wrap gap-1.5 pt-1">
-              <span className="text-[11px] font-bold text-gray-500 mr-1 flex items-center gap-1">
-                <MapPin className="w-3 h-3 text-[#f68b1e]" /> Succursale :
-              </span>
-              {availableBranches.map((branch) => (
-                <button
-                  key={branch}
-                  onClick={() => setSelectedBranch(branch)}
-                  className={`text-xs px-3 py-1 rounded-lg font-bold transition-all ${
-                    selectedBranch === branch
-                      ? 'bg-black text-white shadow-sm'
-                      : 'bg-white text-gray-700 border border-gray-200 hover:border-black'
-                  }`}
-                >
-                  {branch}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
-        {filteredProducts.length === 0 ? (
+        {isLoading ? (
+          <div className="flex justify-center py-20">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#f68b1e]"></div>
+          </div>
+        ) : filteredProducts.length === 0 ? (
           <div className="bg-white rounded-2xl p-16 text-center border border-gray-100">
-            <p className="text-gray-400 text-sm">Aucun produit disponible pour le moment dans cette sélection.</p>
+            <p className="text-gray-400 text-sm">Aucun produit disponible pour la boutique de {storeBranch}.</p>
           </div>
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
@@ -207,11 +213,6 @@ export default function ClientApp() {
                       <span className="bg-[#f68b1e] text-white font-bold text-[10px] px-2 py-0.5 rounded shadow-md">
                         {p.quantity} en stock
                       </span>
-                      {p.branch && (
-                        <span className="bg-zinc-900/80 backdrop-blur-xs text-white font-semibold text-[9px] px-2 py-0.5 rounded">
-                          📍 {p.branch}
-                        </span>
-                      )}
                     </div>
                   </div>
                   <div className="p-3 flex-1 flex flex-col justify-between bg-white">
@@ -279,7 +280,6 @@ export default function ClientApp() {
                         <img src={item.image_url} alt="" className="w-10 h-10 object-cover rounded bg-white border" />
                         <div>
                           <h4 className="text-sm font-extrabold text-black line-clamp-1">{item.name}</h4>
-                          {item.branch && <p className="text-[10px] text-gray-500 font-semibold">📍 {item.branch}</p>}
                           <p className="text-sm font-black text-[#f68b1e]">Prix: {item.price?.toLocaleString()} FCFA</p>
                         </div>
                       </div>

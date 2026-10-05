@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Package, Users, Eye, EyeOff, UserCog, Store, Filter, Lock } from 'lucide-react';
+import { Package, Users, Eye, EyeOff, UserCog, Store, Filter, Lock, Globe } from 'lucide-react';
 import SalesLedger from './SalesLedger';
 import InventoryManagement from './components/InventoryManagement';
 import BranchManagement from './components/BranchManagement';
@@ -32,6 +32,9 @@ export default function AdminApp({ currentUser, supabase }) {
     return localStorage.getItem('donchike_storefront_branch') || '';
   });
   const [storefrontModalOpen, setStorefrontModalOpen] = useState(false);
+  
+  // NEW: Live Public Storefront Control State
+  const [liveStoreBranch, setLiveStoreBranch] = useState('Siège Principal');
 
   useEffect(() => {
     localStorage.setItem('donchike_storefront_branch', storefrontBranch);
@@ -85,6 +88,7 @@ export default function AdminApp({ currentUser, supabase }) {
     fetchCustomersFromSupabase();
     if (isAdmin) {
       fetchStaffFromSupabase();
+      fetchStoreSettings(); // NEW: Fetch global settings
     }
   }, [isAdmin, activeTab]);
 
@@ -95,6 +99,38 @@ export default function AdminApp({ currentUser, supabase }) {
       setProductBranch('');
     }
   }, [viewingBranch]);
+
+  // --- NEW: FETCH GLOBAL STORE SETTINGS ---
+  const fetchStoreSettings = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('store_settings')
+        .select('active_branch')
+        .single();
+      
+      if (data && data.active_branch) {
+        setLiveStoreBranch(data.active_branch);
+      }
+    } catch (err) {
+      console.log("Paramètres de la boutique non configurés (normal au premier lancement).");
+    }
+  };
+
+  // --- NEW: UPDATE LIVE STOREFRONT ---
+  const handleUpdateLiveBranch = async (newBranch) => {
+    if (!verifyAdminPinBeforeAction()) return;
+    try {
+      const { error } = await supabase
+        .from('store_settings')
+        .upsert({ id: 1, active_branch: newBranch }, { onConflict: 'id' });
+      
+      if (error) throw error;
+      setLiveStoreBranch(newBranch);
+      alert(`Succès ! L'application client affiche maintenant les stocks de : ${newBranch}`);
+    } catch (err) {
+      alert(`Erreur lors de la mise à jour : ${err.message}`);
+    }
+  };
 
   const fetchBranchesFromSupabase = async () => {
     try {
@@ -708,16 +744,52 @@ export default function AdminApp({ currentUser, supabase }) {
           />
         )}
 
-        {/* TAB 4: STOREFRONT PREVIEW */}
+        {/* TAB 4: STOREFRONT PREVIEW & GLOBAL STORE CONTROL */}
         {isAdmin && activeTab === 'storefront' && (
-          <StorefrontPreview 
-            branches={branches}
-            storefrontBranch={storefrontBranch}
-            setStorefrontBranch={setStorefrontBranch}
-            storefrontModalOpen={storefrontModalOpen}
-            setStorefrontModalOpen={setStorefrontModalOpen}
-            storefrontFilteredProducts={storefrontFilteredProducts}
-          />
+          <div className="space-y-6">
+            
+            {/* NEW: LIVE STORE CONFIGURATION CARD */}
+            <div className="bg-white p-5 sm:p-6 rounded-xl border-2 border-emerald-500/20 shadow-sm bg-gradient-to-r from-emerald-50/50 to-white">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-black text-emerald-900 flex items-center gap-2">
+                    <Globe className="w-5 h-5 text-emerald-600" />
+                    Configuration de la Boutique Publique
+                  </h3>
+                  <p className="text-sm text-gray-600 mt-1">
+                    Sélectionnez la succursale dont le stock sera <span className="font-semibold text-emerald-700">actuellement visible</span> par vos clients sur le lien public.
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 bg-white p-2.5 rounded-lg border border-gray-200 shadow-sm min-w-[220px]">
+                   <div className="flex flex-col w-full">
+                     <span className="text-[10px] uppercase font-bold text-gray-400">Succursale Active en Ligne</span>
+                     <select 
+                       value={liveStoreBranch}
+                       onChange={(e) => handleUpdateLiveBranch(e.target.value)}
+                       className="text-sm font-bold text-gray-900 bg-transparent outline-none cursor-pointer w-full mt-0.5"
+                     >
+                       <option value="Siège Principal">Siège Principal (HQ)</option>
+                       {branches.map(b => (
+                         <option key={b.id} value={b.name}>{b.name}</option>
+                       ))}
+                     </select>
+                   </div>
+                </div>
+              </div>
+            </div>
+
+            {/* EXISTING STOREFRONT PREVIEW COMPONENT (UPDATED WITH LIVE PROPS) */}
+            <StorefrontPreview 
+              branches={branches}
+              storefrontBranch={storefrontBranch}
+              setStorefrontBranch={setStorefrontBranch}
+              storefrontModalOpen={storefrontModalOpen}
+              setStorefrontModalOpen={setStorefrontModalOpen}
+              storefrontFilteredProducts={storefrontFilteredProducts}
+              liveStoreBranch={liveStoreBranch}
+              handleUpdateLiveBranch={handleUpdateLiveBranch}
+            />
+          </div>
         )}
 
         {/* TAB 5: STAFF MANAGEMENT */}
