@@ -8,13 +8,10 @@ export default function ClientApp() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // OFFICIAL LINKS, HANDLES & BRANCH CONFIGURATION
+  // OFFICIAL LINKS & HANDLES
   const WHATSAPP_NUMBER = '2250759322034';
   const FACEBOOK_URL = 'https://facebook.com/profile.php?id=61590626370497';
   const TIKTOK_URL = 'https://tiktok.com/@your-profile';
-  
-  // Set your specific branch identifier here to isolate inventory per branch
-  const BRANCH_ID = 'abidjan_branch'; // Change this to match your DB branch identifier or UUID
 
   useEffect(() => {
     fetchProducts();
@@ -22,13 +19,12 @@ export default function ClientApp() {
 
   const fetchProducts = async () => {
     try {
-      // Fetch products filtered by branch, active stock, and unarchived status
+      // Exclude archived items and items with 0 stock from the client storefront
       const { data, error } = await supabase
         .from('products')
         .select('*')
         .eq('is_archived', false)
         .gt('quantity', 0)
-        .eq('branch_id', BRANCH_ID) // <-- Filters out products from other branches
         .order('created_at', { ascending: false });
       
       if (!error && data) setProducts(data);
@@ -261,7 +257,7 @@ export default function ClientApp() {
               )}
             </div>
             {cart.length > 0 && (
-              <div className="border-t pt-0.5">
+              <div className="border-t pt-3">
                 <div className="flex justify-between items-baseline font-bold mb-3">
                   <span className="text-gray-400 text-xs uppercase">Total:</span>
                   <span className="text-lg font-black text-black">Prix: {cartTotal.toLocaleString()} FCFA</span>
