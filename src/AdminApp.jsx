@@ -22,6 +22,12 @@ export default function AdminApp({ currentUser, supabase }) {
   const [showFinancials, setShowFinancials] = useState(false);
   const autoHideTimerRef = useRef(null);
 
+  // Secure Admin PIN Modal States
+  const [adminPinModalOpen, setAdminPinModalOpen] = useState(false);
+  const [adminPinInput, setAdminPinInput] = useState('');
+  const [adminPinResolve, setAdminPinResolve] = useState(null);
+  const [adminPinError, setAdminPinError] = useState('');
+
   // Branch Context Filters
   const [viewingBranch, setViewingBranch] = useState(''); 
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('ALL');
@@ -118,7 +124,7 @@ export default function AdminApp({ currentUser, supabase }) {
 
   // --- UPDATE LIVE STOREFRONT (Saves branch_id or '' for HQ) ---
   const handleUpdateLiveBranch = async (newBranchId) => {
-    if (!verifyAdminPinBeforeAction()) return;
+    if (!(await verifyAdminPinBeforeAction())) return;
     try {
       const { error } = await supabase
         .from('store_settings')
@@ -194,20 +200,21 @@ export default function AdminApp({ currentUser, supabase }) {
   };
 
   const verifyAdminPinBeforeAction = () => {
-    const adminPin = prompt("Sécurité Admin : Entrez votre code PIN Administrateur pour confirmer :");
-    if (!adminPin) return false;
-    const verifyingAdmin = staffList.find(s => s.pin_code === adminPin && s.role === 'admin' && s.is_active);
-    if (!verifyingAdmin) { alert("Code PIN incorrect."); return false; }
-    return true;
+    return new Promise((resolve) => {
+      setAdminPinInput('');
+      setAdminPinError('');
+      setAdminPinResolve(() => resolve);
+      setAdminPinModalOpen(true);
+    });
   };
 
   // --- FINANCIAL MASKING TOGGLE & AUTO-HIDE TIMER ---
-  const handleToggleFinancialVisibility = () => {
+  const handleToggleFinancialVisibility = async () => {
     if (showFinancials) {
       setShowFinancials(false);
       if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
     } else {
-      if (verifyAdminPinBeforeAction()) {
+      if (await verifyAdminPinBeforeAction()) {
         setShowFinancials(true);
         if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
         autoHideTimerRef.current = setTimeout(() => {
@@ -241,7 +248,7 @@ export default function AdminApp({ currentUser, supabase }) {
   };
 
   const handleDeleteBranch = async (branchId) => {
-    if (!verifyAdminPinBeforeAction()) return;
+    if (!(await verifyAdminPinBeforeAction())) return;
     if (!window.confirm('Êtes-vous sûr de vouloir supprimer cette succursale ? Cette action est irréversible.')) return;
     try {
       const { error } = await supabase.from('branches').delete().eq('id', branchId);
@@ -258,7 +265,7 @@ export default function AdminApp({ currentUser, supabase }) {
   };
 
   const handleReassignStaff = async (staffId, newBranchId) => {
-    if (!verifyAdminPinBeforeAction()) return;
+    if (!(await verifyAdminPinBeforeAction())) return;
     try {
       const targetBranch = newBranchId || null;
       const { error } = await supabase.from('staff').update({ branch_id: targetBranch }).eq('id', staffId);
@@ -271,8 +278,8 @@ export default function AdminApp({ currentUser, supabase }) {
   };
 
   // --- STAFF HANDLERS ---
-  const handleStartEditStaff = (staffMember) => {
-    if (!verifyAdminPinBeforeAction()) return;
+  const handleStartEditStaff = async (staffMember) => {
+    if (!(await verifyAdminPinBeforeAction())) return;
     setEditingStaff(staffMember);
     setStaffName(staffMember.full_name || '');
     setStaffPin(staffMember.pin_code || '');
@@ -284,7 +291,7 @@ export default function AdminApp({ currentUser, supabase }) {
   const handleSaveStaff = async (e) => {
     e.preventDefault();
     if (!staffName || !staffPin) return;
-    if (!verifyAdminPinBeforeAction()) return;
+    if (!(await verifyAdminPinBeforeAction())) return;
 
     try {
       const payload = {
@@ -307,7 +314,7 @@ export default function AdminApp({ currentUser, supabase }) {
   };
 
   const handleToggleStaffStatus = async (id, currentStatus) => {
-    if (!verifyAdminPinBeforeAction()) return;
+    if (!(await verifyAdminPinBeforeAction())) return;
     try {
       const { error } = await supabase.from('staff').update({ is_active: !currentStatus }).eq('id', id);
       if (error) throw error;
@@ -834,6 +841,70 @@ export default function AdminApp({ currentUser, supabase }) {
         handleConfirmBatchTransfer={handleConfirmBatchTransfer}
         batchTransferLoading={batchTransferLoading}
       />
+
+      {/* SECURE ADMIN PIN MODAL */}
+      {adminPinModalOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-100 space-y-4 animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600">
+                <Lock className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-gray-900">Sécurité Admin</h3>
+                <p className="text-xs text-gray-500">Entrez votre code PIN Administrateur pour confirmer :</p>
+              </div>
+            </div>
+
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const verifyingAdmin = staffList.find(s => s.pin_code === adminPinInput && s.role === 'admin' && s.is_active);
+              if (!verifyingAdmin) {
+                setAdminPinError("Code PIN incorrect.");
+                return;
+              }
+              setAdminPinModalOpen(false);
+              if (adminPinResolve) adminPinResolve(true);
+            }} className="space-y-4">
+              <div>
+                <input 
+                  type="password"
+                  value={adminPinInput}
+                  onChange={(e) => {
+                    setAdminPinInput(e.target.value);
+                    if (adminPinError) setAdminPinError('');
+                  }}
+                  placeholder="••••••••"
+                  autoFocus
+                  className="w-full px-4 py-3 bg-gray-50 border border-gray-300 rounded-xl text-center text-xl tracking-widest font-mono focus:bg-white focus:ring-2 focus:ring-[#0f172a] focus:outline-none transition-all"
+                />
+                {adminPinError && (
+                  <p className="text-xs text-red-600 mt-1.5 font-medium text-center">{adminPinError}</p>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAdminPinModalOpen(false);
+                    if (adminPinResolve) adminPinResolve(false);
+                  }}
+                  className="flex-1 py-2.5 px-4 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-xl text-sm transition-all cursor-pointer"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 px-4 bg-[#0f172a] hover:bg-slate-800 text-white font-semibold rounded-xl text-sm shadow-md transition-all cursor-pointer"
+                >
+                  Confirmer
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
