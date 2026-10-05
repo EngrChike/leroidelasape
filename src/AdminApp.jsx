@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { Package, Users, Eye, UserCog, Store, Filter } from 'lucide-react';
 import SalesLedger from './SalesLedger';
-import InventoryManagement from './InventoryManagement';
-import BranchManagement from './BranchManagement';
-import StorefrontPreview from './StorefrontPreview';
-import BatchTransferModal from './BatchTransferModal';
+import InventoryManagement from './components/InventoryManagement';
+import BranchManagement from './components/BranchManagement';
+import StorefrontPreview from './components/StorefrontPreview';
+import BatchTransferModal from './components/BatchTransferModal';
 import StaffManagement from './StaffManagement';
 
 export default function AdminApp({ currentUser, supabase }) {
