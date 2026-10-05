@@ -18,9 +18,15 @@ export default function AdminApp({ currentUser, supabase }) {
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('ALL');
   const [showArchived, setShowArchived] = useState(false);
 
-  // Storefront Specific Branch Filter State (Default to HQ '')
-  const [storefrontBranch, setStorefrontBranch] = useState('');
+  // Storefront Specific Branch Filter State (Persisted in localStorage for live client view)
+  const [storefrontBranch, setStorefrontBranch] = useState(() => {
+    return localStorage.getItem('donchike_storefront_branch') || '';
+  });
   const [storefrontModalOpen, setStorefrontModalOpen] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('donchike_storefront_branch', storefrontBranch);
+  }, [storefrontBranch]);
 
   // Branch form states
   const [branchName, setBranchName] = useState('');
@@ -405,7 +411,7 @@ export default function AdminApp({ currentUser, supabase }) {
     return matchesBatch && matchesArchiveState;
   });
 
-  // Storefront filtered products based on storefrontBranch (Default HQ)
+  // Storefront filtered products based on storefrontBranch (Default HQ, switches dynamically)
   const storefrontFilteredProducts = products.filter(p => {
     if (p.is_archived || parseInt(p.quantity) < 1) return false;
     if (storefrontBranch === '') {
@@ -654,7 +660,7 @@ export default function AdminApp({ currentUser, supabase }) {
                   <span>Storefront Display Catalogue</span>
                 </h3>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Affichage actuel : <span className="font-bold text-black">{storefrontBranch === '' ? 'Headquarter (HQ Main Stock)' : (branches.find(b => b.id === storefrontBranch)?.name || 'Succursale')}</span>
+                  Affichage actuel en direct : <span className="font-bold text-indigo-600">{storefrontBranch === '' ? 'Headquarter (HQ Main Stock)' : (branches.find(b => b.id === storefrontBranch)?.name || 'Succursale')}</span>
                 </p>
               </div>
 
@@ -770,7 +776,7 @@ export default function AdminApp({ currentUser, supabase }) {
 
             <div className="p-6 space-y-3">
               <p className="text-xs text-gray-500 mb-2">
-                Choisissez quelle succursale ou le QG afficher sur la page d'accueil de la vitrine (Storefront).
+                Choisissez quelle succursale ou le QG afficher sur la page d'accueil de la vitrine (Storefront) pour vos clients.
               </p>
 
               {/* Headquarter Option */}
