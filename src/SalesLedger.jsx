@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Trash2, Pencil, Search, Folder, FolderOpen, Calendar, Clock, User, ChevronDown, ChevronRight, UserCheck, X, AlertTriangle } from 'lucide-react';
 
-export default function SalesLedger({ products, customers, fetchProducts, fetchCustomers, supabase, currentUser }) {
+export default function SalesLedger({ products, customers, fetchProducts, fetchCustomers, supabase, currentUser, activeBranchId }) {
   // Staging / Accumulator Cart State
   const [cartItems, setCartItems] = useState(() => {
     try {
@@ -52,11 +52,12 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
         .order('id', { ascending: false });
 
       if (currentUser?.role !== 'admin') {
-        if (currentUser?.branch_id) {
-          query = query.eq('branch_id', currentUser.branch_id);
-        } else {
-          query = query.eq('staff_id', currentUser?.id);
-        }
+        query = query.eq('staff_id', currentUser?.id);
+      }
+
+      // Filter by Branch Context
+      if (activeBranchId && activeBranchId !== 'ALL') {
+        query = query.eq('branch_id', activeBranchId);
       }
 
       const { data, error } = await query;
@@ -73,7 +74,7 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
     if (currentUser) {
       fetchSalesHistory();
     }
-  }, [currentUser]);
+  }, [currentUser, activeBranchId]);
 
   // Sync cart to local storage
   useEffect(() => {
@@ -100,7 +101,7 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
     }
   };
 
-  const handleAddToCart = async () => {
+  const handleAddToCart = () => {
     if (!cartProductId) return;
     const prod = products.find(p => String(p.id) === String(cartProductId));
     if (!prod || prod.is_archived) return;
@@ -108,22 +109,8 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
     const qty = parseInt(cartQty) || 1;
     const priceToUse = parseFloat(customPrice) >= 0 ? parseFloat(customPrice) : prod.price;
 
-    // Determine available stock (Branch inventory if branch is set, else global product quantity)
-    let availableQty = prod.quantity || 0;
-    if (currentUser?.branch_id) {
-      const { data: biData } = await supabase
-        .from('branch_inventory')
-        .select('quantity')
-        .eq('branch_id', currentUser.branch_id)
-        .eq('product_id', prod.id)
-        .single();
-      if (biData) {
-        availableQty = biData.quantity;
-      }
-    }
-
-    if (qty > availableQty) {
-      alert(`Quantité sélectionnée supérieure au stock disponible (${availableQty}).`);
+    if (qty > prod.quantity) {
+      alert(`Quantité sélectionnée supérieure au stock disponible (${prod.quantity}).`);
       return;
     }
 
@@ -172,39 +159,24 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
 
   // Helper: Revert stock and customer debt for a given sale
   const revertSaleStockAndDebt = async (sale) => {
-    const branchId = sale.branch_id;
     if (sale.items && Array.isArray(sale.items)) {
       for (const item of sale.items) {
         if (item.productId) {
-          if (branchId) {
-            const { data: biData, error: fetchErr } = await supabase
-              .from('branch_inventory')
-              .select('quantity')
-              .eq('branch_id', branchId)
-              .eq('product_id', item.productId)
-              .single();
+          const { data: prodData, error: fetchErr } = await supabase
+            .from('products')
+            .select('quantity')
+            .eq('id', item.productId)
+            .single();
 
-            if (!fetchErr && biData) {
-              const restoredQty = (biData.quantity || 0) + item.qty;
-              await supabase
-                .from('branch_inventory')
-                .update({ quantity: restoredQty })
-                .eq('branch_id', branchId)
-                .eq('product_id', item.productId);
-            }
-          } else {
-            const { data: prodData, error: fetchErr } = await supabase
+          if (!fetchErr && prodData) {
+            const restoredQty = (prodData.quantity || 0) + item.qty;
+            const { error: updateErr } = await supabase
               .from('products')
-              .select('quantity')
-              .eq('id', item.productId)
-              .single();
+              .update({ quantity: restoredQty, stock_status: restoredQty > 0 })
+              .eq('id', item.productId);
 
-            if (!fetchErr && prodData) {
-              const restoredQty = (prodData.quantity || 0) + item.qty;
-              await supabase
-                .from('products')
-                .update({ quantity: restoredQty, stock_status: restoredQty > 0 })
-                .eq('id', item.productId);
+            if (updateErr) {
+              console.error(`Failed to restore stock for product ${item.productId}:`, updateErr);
             }
           }
         }
@@ -231,63 +203,35 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
     }
   };
 
-  // Deduct Stock Levels in Database (Branch Inventory or Global Products)
-  const deductStockForCart = async (items, branchId) => {
+  // Deduct Stock Levels in Database
+  const deductStockForCart = async (items) => {
     for (const item of items) {
       if (item.productId) {
-        if (branchId) {
-          const { data: freshBi, error: fetchErr } = await supabase
-            .from('branch_inventory')
-            .select('quantity')
-            .eq('branch_id', branchId)
-            .eq('product_id', item.productId)
-            .single();
+        const { data: freshProd, error: fetchErr } = await supabase
+          .from('products')
+          .select('quantity')
+          .eq('id', item.productId)
+          .single();
 
-          if (fetchErr) {
-            console.error(`Error fetching branch inventory for item ${item.productId}:`, fetchErr);
-            continue;
-          }
+        if (fetchErr) {
+          console.error(`Error fetching current stock for item ${item.productId}:`, fetchErr);
+          continue;
+        }
 
-          const currentQty = freshBi ? freshBi.quantity : 0;
-          const newStock = Math.max(0, currentQty - item.qty);
+        const currentQty = freshProd ? freshProd.quantity : 0;
+        const newStock = Math.max(0, currentQty - item.qty);
 
-          const { error: stockUpdateErr } = await supabase
-            .from('branch_inventory')
-            .update({ quantity: newStock })
-            .eq('branch_id', branchId)
-            .eq('product_id', item.productId);
+        const { error: stockUpdateErr } = await supabase
+          .from('products')
+          .update({ 
+            quantity: newStock, 
+            stock_status: newStock > 0 
+          })
+          .eq('id', item.productId);
 
-          if (stockUpdateErr) {
-            console.error(`Failed to update branch inventory for item ${item.productId}:`, stockUpdateErr);
-            alert(`Avertissement Stock: Impossible de réduire le stock de la succursale pour ${item.name}.`);
-          }
-        } else {
-          const { data: freshProd, error: fetchErr } = await supabase
-            .from('products')
-            .select('quantity')
-            .eq('id', item.productId)
-            .single();
-
-          if (fetchErr) {
-            console.error(`Error fetching current stock for item ${item.productId}:`, fetchErr);
-            continue;
-          }
-
-          const currentQty = freshProd ? freshProd.quantity : 0;
-          const newStock = Math.max(0, currentQty - item.qty);
-
-          const { error: stockUpdateErr } = await supabase
-            .from('products')
-            .update({ 
-              quantity: newStock, 
-              stock_status: newStock > 0 
-            })
-            .eq('id', item.productId);
-
-          if (stockUpdateErr) {
-            console.error(`Failed to update stock for item ${item.productId}:`, stockUpdateErr);
-            alert(`Avertissement Stock: Impossible de réduire le stock pour ${item.name}.`);
-          }
+        if (stockUpdateErr) {
+          console.error(`Failed to update stock for item ${item.productId}:`, stockUpdateErr);
+          alert(`Avertissement Stock: Impossible de réduire le stock pour ${item.name}. Vérifiez les permissions RLS Supabase.`);
         }
       }
     }
@@ -319,6 +263,9 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
       const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
       const monthLabel = now.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 
+      // Determine correct branch_id (null if ALL/HQ, otherwise specific branch)
+      const targetBranchId = (!activeBranchId || activeBranchId === 'ALL') ? null : activeBranchId;
+
       let targetCustomerId = null;
       let customerDisplayName = 'Client de Passage';
 
@@ -326,7 +273,8 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
         const { data: newCustData, error: custErr } = await supabase.from('customers').insert([{
           name: ledgerForm.newName.trim() || 'Client de Passage',
           phone: ledgerForm.newPhone.trim() || '',
-          total_debt: balance
+          total_debt: balance,
+          branch_id: targetBranchId
         }]).select().single();
 
         if (custErr) throw custErr;
@@ -350,13 +298,11 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
 
       const staffId = editingSale ? (editingSale.staff_id || currentUser?.id) : currentUser?.id;
       const staffName = editingSale ? (editingSale.staff_name || 'Vendeur') : (currentUser?.name || currentUser?.full_name || currentUser?.email || 'Vendeur');
-      const branchId = editingSale ? (editingSale.branch_id || currentUser?.branch_id || null) : (currentUser?.branch_id || null);
 
       const salePayload = {
         customer_id: targetCustomerId,
         staff_id: staffId,
         staff_name: staffName,
-        branch_id: branchId,
         goods: goodsDescription,
         batch: cartItems.length === 1 ? cartItems[0].batch : 'MULTI-BATCH',
         product_id: cartItems.length === 1 ? cartItems[0].productId : null,
@@ -364,7 +310,8 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
         total: cartTotal,
         paid: paidAmount,
         type: 'Sale',
-        items: cartItems
+        items: cartItems,
+        branch_id: targetBranchId
       };
 
       try {
@@ -387,8 +334,8 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
         if (histErr) throw histErr;
       }
 
-      // Deduct product stock from DB (Branch or Global)
-      await deductStockForCart(cartItems, branchId);
+      // Deduct product stock from DB
+      await deductStockForCart(cartItems);
 
       setLedgerForm({ customerId: 'walkin', newName: '', newPhone: '', initialPaid: '' });
       setCartItems([]);
@@ -404,7 +351,7 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
     }
   };
 
-  // Admin / Staff Delete Sale Action
+  // Admin Delete Sale Action
   const handleDeleteSale = async (sale) => {
     const confirmDelete = window.confirm(
       `⚠️ ATTENTION : Voulez-vous vraiment SUPPRIMER la vente de ${sale.goods} ?\n\n- Les articles seront remis en stock.\n- La dette éventuelle du client sera ajustée.`
@@ -735,7 +682,7 @@ export default function SalesLedger({ products, customers, fetchProducts, fetchC
           
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b">
             <h3 className="font-bold text-xs uppercase tracking-wide text-gray-700">
-              Historique des Ventes {currentUser?.role !== 'admin' ? '(Succursale / Vos Ventes)' : 'Global'}
+              Historique des Ventes {currentUser?.role !== 'admin' ? '(Vos Ventes)' : 'Global'}
             </h3>
 
             <div className="relative w-full md:w-72">
