@@ -5,6 +5,7 @@ import InventoryManagement from './InventoryManagement';
 import BranchManagement from './BranchManagement';
 import StorefrontPreview from './StorefrontPreview';
 import BatchTransferModal from './BatchTransferModal';
+import StaffManagement from './StaffManagement';
 
 export default function AdminApp({ currentUser, supabase }) {
   const isAdmin = currentUser?.role === 'admin';
@@ -225,7 +226,7 @@ export default function AdminApp({ currentUser, supabase }) {
         initial_quantity: parsedInitQty || parsedQty,
         stock_status: parsedQty > 0, 
         batch_reference: batch.trim().toUpperCase(),
-        branch_id: productBranch || null, // Associates inventory with HQ or a Branch
+        branch_id: productBranch || null,
         is_archived: false
       };
 
@@ -573,62 +574,25 @@ export default function AdminApp({ currentUser, supabase }) {
 
         {/* TAB 5: STAFF MANAGEMENT */}
         {isAdmin && activeTab === 'staff' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm h-fit">
-              <h3 className="font-semibold text-sm uppercase text-gray-800 mb-5 border-b pb-3">{editingStaff ? 'Edit Staff Profile' : 'Register New Staff'}</h3>
-              <form onSubmit={handleSaveStaff} className="space-y-4">
-                <div><label className="text-xs font-semibold text-gray-600 block mb-1.5">Full Name</label><input type="text" value={staffName} onChange={e => setStaffName(e.target.value)} className="w-full border border-gray-300 p-3 text-sm rounded-lg focus:ring-2 focus:ring-[#0f172a] outline-none" required /></div>
-                <div><label className="text-xs font-semibold text-gray-600 block mb-1.5">Access PIN Code</label><input type="text" value={staffPin} onChange={e => setStaffPin(e.target.value)} className="w-full border border-gray-300 p-3 text-sm rounded-lg focus:ring-2 focus:ring-[#0f172a] outline-none" required /></div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 block mb-1.5">Branch Assignment</label>
-                  <select value={staffBranch} onChange={e => setStaffBranch(e.target.value)} className="w-full border border-gray-300 p-3 text-sm rounded-lg focus:ring-2 focus:ring-[#0f172a] outline-none">
-                    <option value="">Global / HQ Access</option>
-                    {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="text-xs font-semibold text-gray-600 block mb-1.5">System Role</label>
-                  <select value={staffRole} onChange={e => setStaffRole(e.target.value)} className="w-full border border-gray-300 p-3 text-sm rounded-lg focus:ring-2 focus:ring-[#0f172a] outline-none">
-                    <option value="staff">Sales Agent (Staff)</option>
-                    <option value="admin">Administrator</option>
-                  </select>
-                </div>
-                <button type="submit" className="w-full bg-[#0f172a] hover:bg-gray-800 text-white py-3 text-sm rounded-lg font-semibold transition-colors mt-2">{editingStaff ? 'Update Profile' : 'Create Account'}</button>
-              </form>
-            </div>
-            <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-              <h3 className="font-semibold text-sm uppercase text-gray-800 pb-4 border-b">Authorized Personnel</h3>
-              <div className="overflow-hidden mt-4 rounded-lg border border-gray-200">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="p-4 font-semibold text-gray-600">Personnel Name</th>
-                      <th className="p-4 font-semibold text-gray-600">Assignment</th>
-                      <th className="p-4 font-semibold text-gray-600">Role</th>
-                      <th className="p-4 font-semibold text-center text-gray-600">Status & Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {staffList.map(s => (
-                      <tr key={s.id} className="hover:bg-gray-50/80 transition-colors">
-                        <td className="p-4 font-medium text-gray-900">{s.full_name}</td>
-                        <td className="p-4">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${!s.branch_id ? 'bg-slate-100 text-slate-700 border border-slate-200' : 'bg-blue-50 text-blue-700 border border-blue-100'}`}>
-                            {branches.find(b => b.id === s.branch_id)?.name || 'HQ Main'}
-                          </span>
-                        </td>
-                        <td className="p-4 text-gray-600 capitalize">{s.role}</td>
-                        <td className="p-4 text-center space-x-4">
-                          <button onClick={() => { if(!verifyAdminPinBeforeAction()) return; setEditingStaff(s); setStaffName(s.full_name); setStaffPin(s.pin_code); setStaffRole(s.role); setStaffBranch(s.branch_id || ''); }} className="text-blue-600 font-medium hover:text-blue-800">Edit</button>
-                          <button onClick={() => handleToggleStaffStatus(s.id, s.is_active)} className={`font-medium ${s.is_active ? 'text-red-500 hover:text-red-700' : 'text-emerald-600 hover:text-emerald-800'}`}>{s.is_active ? 'Revoke' : 'Activate'}</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
+          <StaffManagement 
+            supabase={supabase}
+            branches={branches}
+            staffList={staffList}
+            fetchStaffFromSupabase={fetchStaffFromSupabase}
+            verifyAdminPinBeforeAction={verifyAdminPinBeforeAction}
+            staffName={staffName}
+            setStaffName={setStaffName}
+            staffPin={staffPin}
+            setStaffPin={setStaffPin}
+            staffRole={staffRole}
+            setStaffRole={setStaffRole}
+            staffBranch={staffBranch}
+            setStaffBranch={setStaffBranch}
+            editingStaff={editingStaff}
+            setEditingStaff={setEditingStaff}
+            handleSaveStaff={handleSaveStaff}
+            handleToggleStaffStatus={handleToggleStaffStatus}
+          />
         )}
       </div>
 
