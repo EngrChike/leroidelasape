@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Users, Eye, Pencil, Archive, RotateCcw, X, Layers, UserCog, Key, Store, MapPin, Filter, ArrowRightLeft } from 'lucide-react';
+import { Package, Users, Eye, Pencil, Archive, RotateCcw, X, Layers, UserCog, Key, Store, MapPin, Filter, ArrowRightLeft, Send, Check, AlertCircle, ArrowRight } from 'lucide-react';
 import SalesLedger from './SalesLedger';
 
 export default function AdminApp({ currentUser, supabase }) {
@@ -43,9 +43,12 @@ export default function AdminApp({ currentUser, supabase }) {
   const [uploading, setUploading] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
 
-  // Transfer State
-  const [transferModalOpen, setTransferModalOpen] = useState(false);
-  const [transferData, setTransferData] = useState({ sourceProduct: null, targetBranchId: '', quantity: '' });
+  // Batch Transfer States
+  const [batchTransferOpen, setBatchTransferOpen] = useState(false);
+  const [batchTransferStep, setBatchTransferStep] = useState('select'); // 'select' or 'review'
+  const [selectedBatchItems, setSelectedBatchItems] = useState({}); // { [productId]: { product, selected, targetBranch, qty } }
+  const [batchTransferLoading, setBatchTransferLoading] = useState(false);
+  const [batchTransferError, setBatchTransferError] = useState('');
 
   // Determine active branch context (Admin sees what they filter, Staff sees only their branch)
   const activeBranchId = isAdmin ? viewingBranch : (currentUser?.branch_id || '');
@@ -221,49 +224,124 @@ export default function AdminApp({ currentUser, supabase }) {
     } catch (err) { alert(`Erreur: ${err.message}`); } finally { setUploading(false); }
   };
 
-  // Transfer HQ Stock to Branch logic
-  const handleTransferStock = async (e) => {
-    e.preventDefault();
-    const { sourceProduct, targetBranchId, quantity } = transferData;
-    const qty = parseInt(quantity);
+  // --- BATCH TRANSFER HANDLERS ---
+  const handleOpenBatchTransfer = () => {
+    setSelectedBatchItems({});
+    setBatchTransferStep('select');
+    setBatchTransferError('');
+    setBatchTransferOpen(true);
+  };
 
-    if (!sourceProduct || !targetBranchId || qty <= 0 || qty > sourceProduct.quantity) {
-      alert("Invalid transfer details or insufficient stock.");
+  const handleToggleBatchItemSelect = (product) => {
+    setSelectedBatchItems(prev => {
+      const copy = { ...prev };
+      if (copy[product.id]?.selected) {
+        delete copy[product.id];
+      } else {
+        copy[product.id] = {
+          product,
+          selected: true,
+          targetBranch: branches[0]?.id || '',
+          qty: 1
+        };
+      }
+      return copy;
+    });
+  };
+
+  const handleUpdateBatchItemDetail = (productId, field, value) => {
+    setSelectedBatchItems(prev => {
+      if (!prev[productId]) return prev;
+      return {
+        ...prev,
+        [productId]: {
+          ...prev[productId],
+          [field]: value
+        }
+      };
+    });
+  };
+
+  const handleProceedToBatchReview = () => {
+    const activeItems = Object.values(selectedBatchItems).filter(item => item.selected);
+    if (activeItems.length === 0) {
+      setBatchTransferError("Veuillez sélectionner au moins un produit à transférer.");
       return;
     }
 
+    for (const item of activeItems) {
+      if (!item.targetBranch) {
+        setBatchTransferError("Veuillez assigner une succursale de destination pour tous les produits sélectionnés.");
+        return;
+      }
+      if (item.qty <= 0) {
+        setBatchTransferError(`La quantité pour "${item.product.name}" doit être supérieure à 0.`);
+        return;
+      }
+      if (item.qty > item.product.quantity) {
+        setBatchTransferError(`Quantité insuffisante au QG pour "${item.product.name}" (Max: ${item.product.quantity}).`);
+        return;
+      }
+    }
+
+    setBatchTransferError('');
+    setBatchTransferStep('review');
+  };
+
+  const handleConfirmBatchTransfer = async () => {
+    setBatchTransferLoading(true);
+    setBatchTransferError('');
+
     try {
-      // 1. Deduct from source branch / HQ
-      const newSourceQty = sourceProduct.quantity - qty;
-      await supabase.from('products').update({ quantity: newSourceQty, stock_status: newSourceQty > 0 }).eq('id', sourceProduct.id);
+      const activeItems = Object.values(selectedBatchItems).filter(item => item.selected);
 
-      // 2. Check if product already exists in target branch
-      const existingTargetProd = products.find(p => 
-        p.name.trim().toLowerCase() === sourceProduct.name.trim().toLowerCase() && 
-        p.batch_reference === sourceProduct.batch_reference && 
-        String(p.branch_id || '') === String(targetBranchId)
-      );
+      for (const item of activeItems) {
+        const { product, targetBranch, qty } = item;
 
-      if (existingTargetProd) {
-        // Add to existing branch stock
-        const newTargetQty = existingTargetProd.quantity + qty;
-        await supabase.from('products').update({ quantity: newTargetQty, stock_status: newTargetQty > 0 }).eq('id', existingTargetProd.id);
-      } else {
-        // Create new inventory item for the branch
-        const { id, created_at, ...prodData } = sourceProduct;
-        prodData.branch_id = targetBranchId;
-        prodData.quantity = qty;
-        prodData.initial_quantity = qty;
-        prodData.stock_status = true;
-        await supabase.from('products').insert([prodData]);
+        // 1. Deduct quantity from HQ product
+        const newHqQty = product.quantity - qty;
+        const { error: hqError } = await supabase
+          .from('products')
+          .update({ quantity: newHqQty, stock_status: newHqQty > 0 })
+          .eq('id', product.id);
+
+        if (hqError) throw hqError;
+
+        // 2. Check if product already exists in target branch
+        const existingTargetProd = products.find(p => 
+          p.name.trim().toLowerCase() === product.name.trim().toLowerCase() && 
+          String(p.batch_reference || '') === String(product.batch_reference || '') && 
+          String(p.branch_id || '') === String(targetBranch)
+        );
+
+        if (existingTargetProd) {
+          const newTargetQty = (existingTargetProd.quantity || 0) + Number(qty);
+          const { error: updateError } = await supabase
+            .from('products')
+            .update({ quantity: newTargetQty, stock_status: newTargetQty > 0 })
+            .eq('id', existingTargetProd.id);
+
+          if (updateError) throw updateError;
+        } else {
+          const { id, created_at, ...prodData } = product;
+          prodData.branch_id = targetBranch;
+          prodData.quantity = Number(qty);
+          prodData.initial_quantity = Number(qty);
+          prodData.stock_status = true;
+          const { error: insertError } = await supabase.from('products').insert([prodData]);
+
+          if (insertError) throw insertError;
+        }
       }
 
-      setTransferModalOpen(false);
-      setTransferData({ sourceProduct: null, targetBranchId: '', quantity: '' });
+      setBatchTransferLoading(false);
+      setBatchTransferOpen(false);
       await fetchProducts();
-      alert(`Successfully transferred ${qty} items to the branch!`);
+      alert("Transfert groupé effectué avec succès !");
     } catch (err) {
-      alert(`Transfer Error: ${err.message}`);
+      console.error("Batch transfer error:", err);
+      setBatchTransferError(`Erreur lors du transfert: ${err.message}`);
+      setBatchTransferLoading(false);
     }
   };
 
@@ -291,7 +369,6 @@ export default function AdminApp({ currentUser, supabase }) {
   };
 
   // ---- CONTEXT FILTERING FOR DASHBOARD & METRICS ----
-  // Fixed filtering logic to correctly treat null values as HQ Main Stock ('')
   const contextProducts = products.filter(p => activeBranchId === 'ALL' || String(p.branch_id || '') === String(activeBranchId));
   const contextCustomers = customers.filter(c => activeBranchId === 'ALL' || String(c.branch_id || '') === String(activeBranchId));
 
@@ -325,6 +402,8 @@ export default function AdminApp({ currentUser, supabase }) {
   });
 
   const frontPageProducts = contextProducts.filter(p => !p.is_archived && parseInt(p.quantity) >= 1);
+  const hqProductsForTransfer = products.filter(p => (!p.branch_id || p.branch_id === '') && !p.is_archived && parseInt(p.quantity) > 0);
+  const activeSelectedArray = Object.values(selectedBatchItems).filter(i => i.selected);
 
   return (
     <div className="bg-[#f8f9fa] text-gray-800 font-sans p-3 sm:p-6 lg:p-8 min-h-screen">
@@ -365,7 +444,7 @@ export default function AdminApp({ currentUser, supabase }) {
           </div>
         )}
 
-        {/* FINANCIAL METRICS (Dynamically updates based on HQ/Branch Filter) */}
+        {/* FINANCIAL METRICS */}
         {isAdmin && (
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
             <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
@@ -474,38 +553,21 @@ export default function AdminApp({ currentUser, supabase }) {
             {/* INVENTORY TABLE */}
             <div className="xl:col-span-3 bg-white p-6 rounded-xl border border-gray-200 shadow-sm space-y-5">
               <div className="flex flex-col sm:flex-row justify-between pb-4 border-b gap-4 items-center">
-                <h3 className="font-semibold text-sm uppercase text-gray-800 flex items-center"><Layers className="w-5 h-5 mr-2 text-indigo-600" /> Inventory Catalogue</h3>
+                <div className="flex items-center gap-3">
+                  <h3 className="font-semibold text-sm uppercase text-gray-800 flex items-center"><Layers className="w-5 h-5 mr-2 text-indigo-600" /> Inventory Catalogue</h3>
+                  <button 
+                    onClick={handleOpenBatchTransfer}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-4 py-2 rounded-lg flex items-center space-x-1.5 shadow-xs transition-all"
+                  >
+                    <ArrowRightLeft className="w-3.5 h-3.5" />
+                    <span>Transfert Groupé (QG → Succursales)</span>
+                  </button>
+                </div>
                 <div className="flex gap-3">
                   <button onClick={() => setShowArchived(!showArchived)} className="px-4 py-2 rounded-lg text-xs font-semibold bg-gray-100 hover:bg-gray-200 text-gray-700 transition-colors">{showArchived ? 'View Active' : 'View Archived'}</button>
                   <select value={selectedBatchFilter} onChange={e => setSelectedBatchFilter(e.target.value)} className="border border-gray-300 px-3 py-2 text-xs rounded-lg bg-white font-medium focus:ring-2 focus:ring-[#0f172a] outline-none">{uniqueBatches.map(b => <option key={b} value={b}>{b}</option>)}</select>
                 </div>
               </div>
-
-              {/* Transfer Modal */}
-              {transferModalOpen && transferData.sourceProduct && (
-                <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-5 mb-5 shadow-sm">
-                  <div className="flex justify-between items-center mb-3">
-                    <h4 className="font-semibold text-indigo-900 flex items-center"><ArrowRightLeft className="w-4 h-4 mr-2" /> Transfer Stock: {transferData.sourceProduct.name}</h4>
-                    <button onClick={() => setTransferModalOpen(false)} className="text-indigo-400 hover:text-indigo-700"><X className="w-5 h-5" /></button>
-                  </div>
-                  <form onSubmit={handleTransferStock} className="flex flex-col sm:flex-row gap-4 items-end">
-                    <div className="flex-1 w-full">
-                      <label className="text-xs font-semibold text-indigo-800 block mb-1">Target Branch</label>
-                      <select value={transferData.targetBranchId} onChange={e => setTransferData({ ...transferData, targetBranchId: e.target.value })} className="w-full border-indigo-200 p-2.5 text-sm rounded-lg" required>
-                        <option value="">-- Select Destination --</option>
-                        {branches.filter(b => String(b.id) !== String(transferData.sourceProduct.branch_id)).map(b => (
-                          <option key={b.id} value={b.id}>{b.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="w-full sm:w-32">
-                      <label className="text-xs font-semibold text-indigo-800 block mb-1">Transfer Qty</label>
-                      <input type="number" min="1" max={transferData.sourceProduct.quantity} value={transferData.quantity} onChange={e => setTransferData({ ...transferData, quantity: e.target.value })} className="w-full border-indigo-200 p-2.5 text-sm rounded-lg" required />
-                    </div>
-                    <button type="submit" className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 text-white text-sm px-6 py-2.5 rounded-lg font-semibold transition-colors">Execute Transfer</button>
-                  </form>
-                </div>
-              )}
 
               <div className="overflow-x-auto rounded-lg border border-gray-200">
                 <table className="w-full text-left text-sm min-w-[700px]">
@@ -544,7 +606,6 @@ export default function AdminApp({ currentUser, supabase }) {
                         </td>
                         <td className="p-4 text-center">
                           <div className="flex items-center justify-center space-x-3">
-                            <button title="Transfer Stock to Branch" onClick={() => { setTransferData({ sourceProduct: p, targetBranchId: '', quantity: '' }); setTransferModalOpen(true); }} className="text-indigo-500 hover:text-indigo-700 transition-colors"><ArrowRightLeft className="w-4 h-4" /></button>
                             <button title="Edit Product" onClick={() => handleStartEditProduct(p)} className="text-blue-500 hover:text-blue-700 transition-colors"><Pencil className="w-4 h-4" /></button>
                             <button title={p.is_archived ? "Restore" : "Archive"} onClick={() => handleArchiveProduct(p.id, !p.is_archived)} className={`${p.is_archived ? "text-emerald-500 hover:text-emerald-700" : "text-gray-400 hover:text-red-500"} transition-colors`}><Archive className="w-4 h-4" /></button>
                           </div>
@@ -558,7 +619,7 @@ export default function AdminApp({ currentUser, supabase }) {
           </div>
         )}
 
-        {/* TAB 3: SALES LEDGER (Only operates on active branch context) */}
+        {/* TAB 3: SALES LEDGER */}
         {activeTab === 'customers' && (
           <SalesLedger 
             products={contextProducts}
@@ -655,6 +716,201 @@ export default function AdminApp({ currentUser, supabase }) {
           </div>
         )}
       </div>
+
+      {/* MULTI-PRODUCT BATCH TRANSFER MODAL */}
+      {batchTransferOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            
+            {/* Modal Header */}
+            <div className="bg-zinc-900 text-white px-6 py-4 flex justify-between items-center border-b border-zinc-800">
+              <div>
+                <h2 className="text-lg font-black tracking-tight uppercase flex items-center space-x-2">
+                  <Send className="w-5 h-5 text-indigo-400" />
+                  <span>Transfert Groupé QG vers Succursales</span>
+                </h2>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  {batchTransferStep === 'select' ? '1. Sélectionnez les produits, les quantités et la succursale de destination' : '2. Vérifiez et confirmez le transfert'}
+                </p>
+              </div>
+              <button onClick={() => setBatchTransferOpen(false)} className="text-zinc-400 hover:text-white p-1.5 rounded-lg hover:bg-zinc-800 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Error Alert */}
+            {batchTransferError && (
+              <div className="mx-6 mt-4 p-3 bg-red-50 border border-red-200 rounded-xl flex items-center space-x-2 text-red-700 text-xs font-bold">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{batchTransferError}</span>
+              </div>
+            )}
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto flex-1">
+              {batchTransferStep === 'select' ? (
+                <div>
+                  <p className="text-xs text-gray-500 mb-4 font-medium">
+                    Cochez les produits du QG que vous souhaitez transférer. Indiquez la quantité et la succursale cible pour chacun.
+                  </p>
+
+                  {hqProductsForTransfer.length === 0 ? (
+                    <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                      <p className="text-gray-400 text-xs">Aucun produit disponible au QG pour le transfert.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {hqProductsForTransfer.map(product => {
+                        const isSelected = !!selectedBatchItems[product.id]?.selected;
+                        const itemData = selectedBatchItems[product.id] || {};
+
+                        return (
+                          <div 
+                            key={product.id} 
+                            className={`p-3.5 rounded-xl border transition-all flex flex-col md:flex-row items-start md:items-center justify-between gap-3 ${
+                              isSelected ? 'border-indigo-600 bg-indigo-50/30 shadow-xs' : 'border-gray-200 bg-white hover:bg-gray-50'
+                            }`}
+                          >
+                            <div className="flex items-center space-x-3 w-full md:w-auto flex-1">
+                              <input 
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => handleToggleBatchItemSelect(product)}
+                                className="w-4 h-4 accent-indigo-600 rounded cursor-pointer"
+                              />
+                              <img src={product.image_url} alt="" className="w-11 h-11 object-cover rounded-lg border bg-gray-100 shrink-0" />
+                              <div>
+                                <h4 className="text-sm font-extrabold text-black line-clamp-1">{product.name}</h4>
+                                <p className="text-[11px] text-gray-500">Stock QG disponible: <span className="font-bold text-black">{product.quantity}</span> | Prix: {product.price?.toLocaleString()} FCFA</p>
+                              </div>
+                            </div>
+
+                            {isSelected && (
+                              <div className="flex items-center space-x-2 w-full md:w-auto justify-end pt-2 md:pt-0 border-t md:border-t-0 border-gray-100">
+                                <div className="flex flex-col">
+                                  <span className="text-[10px] text-gray-400 font-bold uppercase mb-0.5">Destination</span>
+                                  <select 
+                                    value={itemData.targetBranch}
+                                    onChange={(e) => handleUpdateBatchItemDetail(product.id, 'targetBranch', e.target.value)}
+                                    className="bg-white border border-gray-300 rounded-lg text-xs py-1.5 px-2 focus:outline-none focus:border-indigo-600 font-medium"
+                                  >
+                                    <option value="">-- Choisir --</option>
+                                    {branches.map(b => (
+                                      <option key={b.id} value={b.id}>{b.name}</option>
+                                    ))}
+                                  </select>
+                                </div>
+
+                                <div className="flex flex-col w-24">
+                                  <span className="text-[10px] text-gray-400 font-bold uppercase mb-0.5">Quantité</span>
+                                  <input 
+                                    type="number" 
+                                    min="1"
+                                    max={product.quantity}
+                                    value={itemData.qty}
+                                    onChange={(e) => handleUpdateBatchItemDetail(product.id, 'qty', Math.max(1, parseInt(e.target.value) || 1))}
+                                    className="bg-white border border-gray-300 rounded-lg text-xs py-1.5 px-2 focus:outline-none focus:border-indigo-600 font-bold text-center"
+                                  />
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div>
+                  <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-4 mb-4">
+                    <h3 className="text-xs font-bold text-indigo-900 uppercase tracking-wide">Résumé du transfert groupé</h3>
+                    <p className="text-xs text-indigo-700 mt-0.5">Veuillez vérifier les éléments sélectionnés ci-dessous et cliquer sur Confirmer pour valider.</p>
+                  </div>
+
+                  <div className="border border-gray-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-gray-100 text-[11px] font-bold text-gray-600 uppercase border-b border-gray-200">
+                          <th className="p-3">Produit</th>
+                          <th className="p-3">Quantité</th>
+                          <th className="p-3">Succursale Cible</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 text-xs">
+                        {activeSelectedArray.map((item, idx) => {
+                          const targetBranchObj = branches.find(b => b.id === item.targetBranch);
+                          return (
+                            <tr key={idx} className="hover:bg-gray-50">
+                              <td className="p-3 flex items-center space-x-2.5">
+                                <img src={item.product.image_url} alt="" className="w-8 h-8 object-cover rounded border" />
+                                <span className="font-bold text-black">{item.product.name}</span>
+                              </td>
+                              <td className="p-3 font-black text-indigo-600">-{item.qty} unités</td>
+                              <td className="p-3 font-medium text-gray-800">{targetBranchObj ? targetBranchObj.name : item.targetBranch}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex justify-between items-center">
+              {batchTransferStep === 'review' ? (
+                <button 
+                  onClick={() => setBatchTransferStep('select')} 
+                  className="px-4 py-2 rounded-xl border border-gray-300 text-xs font-bold text-gray-700 hover:bg-gray-100 transition-colors"
+                >
+                  ← Retour aux sélections
+                </button>
+              ) : (
+                <span className="text-xs text-gray-500 font-bold">
+                  {activeSelectedArray.length} produit(s) sélectionné(s)
+                </span>
+              )}
+
+              <div className="flex space-x-3 ml-auto">
+                <button 
+                  onClick={() => setBatchTransferOpen(false)} 
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-gray-600 hover:bg-gray-200 transition-colors"
+                >
+                  Annuler
+                </button>
+
+                {batchTransferStep === 'select' ? (
+                  <button 
+                    onClick={handleProceedToBatchReview}
+                    disabled={activeSelectedArray.length === 0}
+                    className="bg-black hover:bg-zinc-800 disabled:opacity-50 text-white px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center space-x-1.5"
+                  >
+                    <span>Vérifier le transfert</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                ) : (
+                  <button 
+                    onClick={handleConfirmBatchTransfer}
+                    disabled={batchTransferLoading}
+                    className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-6 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all flex items-center space-x-1.5 shadow-md"
+                  >
+                    {batchTransferLoading ? (
+                      <span>Transfert en cours...</span>
+                    ) : (
+                      <>
+                        <Check className="w-4 h-4" />
+                        <span>Confirmer et Transférer (OK)</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }
