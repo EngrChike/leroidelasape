@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { UserPlus, UserCheck, UserX, Calendar, Clock, Folder, FolderOpen, ChevronDown, ChevronRight, ShieldCheck, Key } from 'lucide-react';
+import { UserPlus, UserCheck, UserX, Clock, Folder, ChevronDown, ChevronRight, Key } from 'lucide-react';
 
-export default function StaffManagement({ supabase }) {
+export default function StaffManagement({ supabase, branches = [] }) {
   const [staffList, setStaffList] = useState([]);
   const [salesHistory, setSalesHistory] = useState([]);
-  const [newStaff, setNewStaff] = useState({ fullName: '', pinCode: '', role: 'staff' });
+  const [newStaff, setNewStaff] = useState({ fullName: '', pinCode: '', role: 'staff', branchId: '' });
   const [expandedMonths, setExpandedMonths] = useState({});
 
   useEffect(() => {
@@ -13,7 +13,10 @@ export default function StaffManagement({ supabase }) {
   }, []);
 
   const fetchStaff = async () => {
-    const { data, error } = await supabase.from('staff').select('*').order('created_at', { ascending: false });
+    const { data, error } = await supabase
+      .from('staff')
+      .select('*')
+      .order('created_at', { ascending: false });
     if (!error && data) setStaffList(data);
   };
 
@@ -31,16 +34,19 @@ export default function StaffManagement({ supabase }) {
     e.preventDefault();
     if (!newStaff.fullName || !newStaff.pinCode) return alert("Nom complet et PIN requis");
 
-    const { error } = await supabase.from('staff').insert([{
-      full_name: newStaff.fullName,
-      pin_code: newStaff.pinCode,
-      role: newStaff.role
-    }]);
+    const payload = {
+      full_name: newStaff.fullName.trim(),
+      pin_code: newStaff.pinCode.trim(),
+      role: newStaff.role,
+      branch_id: newStaff.branchId || null
+    };
+
+    const { error } = await supabase.from('staff').insert([payload]);
 
     if (error) {
       alert(error.code === '23505' ? "Ce code PIN est déjà utilisé." : "Erreur de création.");
     } else {
-      setNewStaff({ fullName: '', pinCode: '', role: 'staff' });
+      setNewStaff({ fullName: '', pinCode: '', role: 'staff', branchId: '' });
       fetchStaff();
       alert("Compte staff créé avec succès !");
     }
@@ -134,21 +140,32 @@ export default function StaffManagement({ supabase }) {
             <input 
               type="text" placeholder="Nom Complet" value={newStaff.fullName}
               onChange={e => setNewStaff({...newStaff, fullName: e.target.value})}
-              className="w-full border p-2 text-xs rounded-lg"
+              className="w-full border p-2 text-xs rounded-lg outline-none focus:ring-2 focus:ring-slate-800"
             />
             <input 
               type="password" placeholder="Code PIN (ex: 1234)" value={newStaff.pinCode}
               onChange={e => setNewStaff({...newStaff, pinCode: e.target.value})}
-              className="w-full border p-2 text-xs rounded-lg"
+              className="w-full border p-2 text-xs rounded-lg outline-none focus:ring-2 focus:ring-slate-800"
             />
             <select 
               value={newStaff.role} onChange={e => setNewStaff({...newStaff, role: e.target.value})}
-              className="w-full border p-2 text-xs rounded-lg"
+              className="w-full border p-2 text-xs rounded-lg outline-none focus:ring-2 focus:ring-slate-800"
             >
               <option value="staff">Vendeur (Staff)</option>
               <option value="admin">Administrateur</option>
             </select>
-            <button type="submit" className="w-full bg-black text-white text-xs font-bold py-2.5 rounded-lg uppercase">
+
+            {branches.length > 0 && (
+              <select 
+                value={newStaff.branchId} onChange={e => setNewStaff({...newStaff, branchId: e.target.value})}
+                className="w-full border p-2 text-xs rounded-lg outline-none focus:ring-2 focus:ring-slate-800"
+              >
+                <option value="">Succursale Global / Siège</option>
+                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            )}
+
+            <button type="submit" className="w-full bg-black text-white text-xs font-bold py-2.5 rounded-lg uppercase hover:bg-gray-800 transition-colors">
               Créer le compte
             </button>
           </form>
@@ -185,7 +202,7 @@ export default function StaffManagement({ supabase }) {
                     </td>
                     <td className="p-2 text-right">
                       {staff.role !== 'admin' && (
-                        <button onClick={() => toggleStaffStatus(staff.id, staff.is_active)} className={`text-[10px] font-bold px-3 py-1 rounded ${staff.is_active ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                        <button onClick={() => toggleStaffStatus(staff.id, staff.is_active)} className={`text-[10px] font-bold px-3 py-1 rounded ${staff.is_active ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-green-100 text-green-700 hover:bg-green-200'}`}>
                           {staff.is_active ? 'Désactiver' : 'Activer'}
                         </button>
                       )}
