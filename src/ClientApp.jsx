@@ -8,7 +8,7 @@ export default function ClientApp() {
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   
-  // NEW: State for the globally active branch
+  // State for the globally active branch
   const [storeBranch, setStoreBranch] = useState('Siège Principal');
   const [isLoading, setIsLoading] = useState(true);
 
@@ -26,11 +26,11 @@ export default function ClientApp() {
     let activeBranch = 'Siège Principal'; // Default fallback
 
     try {
-      // 1. Check if the Admin has set an active branch in store_settings
+      // 1. Use .maybeSingle() so it doesn't error out if the store_settings table is empty
       const { data: settingsData, error: settingsError } = await supabase
         .from('store_settings')
         .select('active_branch')
-        .single();
+        .maybeSingle();
 
       if (!settingsError && settingsData && settingsData.active_branch) {
         activeBranch = settingsData.active_branch;
@@ -42,16 +42,27 @@ export default function ClientApp() {
     setStoreBranch(activeBranch);
 
     try {
-      // 2. Fetch ONLY products for this specific active branch
-      const { data, error } = await supabase
+      // 2. Fetch products for this specific active branch safely
+      let query = supabase
         .from('products')
         .select('*')
         .eq('is_archived', false)
-        .gt('quantity', 0)
-        .eq('branch', activeBranch) // Locked to the selected branch
-        .order('created_at', { ascending: false });
+        .gt('quantity', 0);
+
+      if (activeBranch === 'Siège Principal') {
+        // Fallback: match 'Siège Principal' or rows where branch might be unassigned (null/empty)
+        query = query.or(`branch.eq.Siège Principal,branch.is.null,branch.eq.`);
+      } else {
+        query = query.eq('branch', activeBranch);
+      }
+
+      const { data, error } = await query.order('created_at', { ascending: false });
       
-      if (!error && data) setProducts(data);
+      if (!error && data) {
+        setProducts(data);
+      } else if (error) {
+        console.error("Error fetching products:", error.message);
+      }
     } catch (err) {
       console.error("Erreur de récupération: ", err);
     }
@@ -106,7 +117,6 @@ export default function ClientApp() {
     window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
-  // Only filter by Search Term now, as the Database handles the Branch filtering
   const filteredProducts = products.filter(product => {
     const pName = product.name ? product.name.toLowerCase() : '';
     const pDesc = product.description ? product.description.toLowerCase() : '';
