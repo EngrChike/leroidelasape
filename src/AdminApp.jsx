@@ -3,7 +3,6 @@ import { Package, Users, Eye, EyeOff, UserCog, Store, Filter, Lock, Globe } from
 import SalesLedger from './SalesLedger';
 import InventoryManagement from './components/InventoryManagement';
 import BranchManagement from './components/BranchManagement';
-import StorefrontPreview from './components/StorefrontPreview';
 import BatchTransferModal from './components/BatchTransferModal';
 import StaffManagement from './StaffManagement';
 
@@ -37,7 +36,6 @@ export default function AdminApp({ currentUser, supabase }) {
   const [storefrontBranch, setStorefrontBranch] = useState(() => {
     return localStorage.getItem('donchike_storefront_branch') || '';
   });
-  const [storefrontModalOpen, setStorefrontModalOpen] = useState(false);
   
   // Live Public Storefront Control State (stores branch_id or '' for HQ)
   const [liveStoreBranch, setLiveStoreBranch] = useState('');
@@ -764,7 +762,7 @@ export default function AdminApp({ currentUser, supabase }) {
                     Configuration de la Boutique Publique
                   </h3>
                   <p className="text-sm text-gray-600 mt-1">
-                    Sélectionnez la succursale dont le stock sera <span className="font-semibold text-emerald-700">actuellement visible</span> par vos clients sur le lien public.
+                    Sélectionnez la succursale dont le stock sera <span className="font-semibold text-emerald-700">actuellement visible</span> par vos clients sur le lien public. (PIN Admin requis)
                   </p>
                 </div>
                 <div className="flex items-center gap-3 bg-white p-2.5 rounded-lg border border-gray-200 shadow-sm min-w-[220px]">
@@ -785,17 +783,80 @@ export default function AdminApp({ currentUser, supabase }) {
               </div>
             </div>
 
-            {/* STOREFRONT PREVIEW COMPONENT */}
-            <StorefrontPreview 
-              branches={branches}
-              storefrontBranch={storefrontBranch}
-              setStorefrontBranch={setStorefrontBranch}
-              storefrontModalOpen={storefrontModalOpen}
-              setStorefrontModalOpen={setStorefrontModalOpen}
-              storefrontFilteredProducts={storefrontFilteredProducts}
-              liveStoreBranch={liveStoreBranch}
-              handleUpdateLiveBranch={handleUpdateLiveBranch}
-            />
+            {/* STOREFRONT PREVIEW CATALOGUE */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-gray-100 pb-4">
+                <div>
+                  <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
+                    <Eye className="w-5 h-5 text-indigo-600" />
+                    Aperçu du Catalogue de la Vitrine Publique
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Visualisez les articles actuellement affichés aux clients pour la succursale sélectionnée.
+                  </p>
+                </div>
+                
+                <div className="flex items-center gap-3 w-full sm:w-auto">
+                  <select 
+                    value={storefrontBranch}
+                    onChange={(e) => setStorefrontBranch(e.target.value)}
+                    className="px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-semibold text-gray-800 outline-none cursor-pointer w-full sm:w-auto"
+                  >
+                    <option value="">Aperçu : Siège Principal (HQ)</option>
+                    {branches.map(b => (
+                      <option key={b.id} value={b.id}>Aperçu : {b.name}</option>
+                    ))}
+                  </select>
+
+                  <button
+                    onClick={() => {
+                      const url = window.location.origin;
+                      navigator.clipboard.writeText(url);
+                      alert("Lien de la boutique copié dans le presse-papier !");
+                    }}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg shadow-sm transition-all whitespace-nowrap cursor-pointer"
+                  >
+                    Copier le lien
+                  </button>
+                </div>
+              </div>
+
+              {/* PRODUCTS GRID */}
+              {storefrontFilteredProducts.length === 0 ? (
+                <div className="text-center py-12 bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                  <Package className="w-10 h-10 text-gray-400 mx-auto mb-3" />
+                  <p className="text-sm font-bold text-gray-700">Aucun produit disponible dans cette succursale</p>
+                  <p className="text-xs text-gray-500 mt-1">Ajoutez du stock ou transférez des articles vers cette succursale pour les afficher.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                  {storefrontFilteredProducts.map(product => (
+                    <div key={product.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col">
+                      <div className="h-48 bg-gray-100 relative overflow-hidden">
+                        <img 
+                          src={product.image_url || 'https://images.unsplash.com/photo-1522337660859-02fbefca4702?auto=format&fit=crop&w=800&q=80'} 
+                          alt={product.name}
+                          className="w-full h-full object-cover"
+                        />
+                        <span className="absolute top-2 right-2 bg-black/65 backdrop-blur-md text-white text-[10px] font-bold px-2.5 py-1 rounded-full">
+                          Stock : {product.quantity}
+                        </span>
+                      </div>
+                      <div className="p-4 flex flex-col flex-1 justify-between space-y-3">
+                        <div>
+                          <h4 className="text-sm font-bold text-gray-900 line-clamp-1">{product.name}</h4>
+                          <p className="text-xs text-gray-500 line-clamp-2 mt-1">{product.description || 'Aucune description fournie.'}</p>
+                        </div>
+                        <div className="flex items-center justify-between pt-3 border-t border-gray-100">
+                          <span className="text-xs text-gray-400 uppercase font-mono">Ref: {product.batch_reference || 'N/A'}</span>
+                          <span className="text-sm font-extrabold text-emerald-600">{(product.price || 0).toLocaleString()} FCFA</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
