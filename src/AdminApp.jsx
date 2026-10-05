@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Package, Users, Eye, UserCog, Store, Filter } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Package, Users, Eye, EyeOff, UserCog, Store, Filter, Lock } from 'lucide-react';
 import SalesLedger from './SalesLedger';
 import InventoryManagement from './components/InventoryManagement';
 import BranchManagement from './components/BranchManagement';
@@ -18,12 +18,16 @@ export default function AdminApp({ currentUser, supabase }) {
   const [staffList, setStaffList] = useState([]);
   const [branches, setBranches] = useState([]);
   
+  // Privacy / Financial Visibility States
+  const [showFinancials, setShowFinancials] = useState(false);
+  const autoHideTimerRef = useRef(null);
+
   // Branch Context Filters
-  const [viewingBranch, setViewingBranch] = useState(''); // Default to '' (HQ Main Stock) instead of 'ALL'
+  const [viewingBranch, setViewingBranch] = useState(''); 
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('ALL');
   const [showArchived, setShowArchived] = useState(false);
 
-  // Storefront Specific Branch Filter State (Persisted in localStorage for live client view)
+  // Storefront Specific Branch Filter State
   const [storefrontBranch, setStorefrontBranch] = useState(() => {
     return localStorage.getItem('donchike_storefront_branch') || '';
   });
@@ -32,6 +36,13 @@ export default function AdminApp({ currentUser, supabase }) {
   useEffect(() => {
     localStorage.setItem('donchike_storefront_branch', storefrontBranch);
   }, [storefrontBranch]);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
+    };
+  }, []);
 
   // Branch form states
   const [branchName, setBranchName] = useState('');
@@ -60,12 +71,12 @@ export default function AdminApp({ currentUser, supabase }) {
 
   // Batch Transfer States
   const [batchTransferOpen, setBatchTransferOpen] = useState(false);
-  const [batchTransferStep, setBatchTransferStep] = useState('select'); // 'select' or 'review'
-  const [selectedBatchItems, setSelectedBatchItems] = useState({}); // { [productId]: { product, selected, targetBranch, qty } }
+  const [batchTransferStep, setBatchTransferStep] = useState('select'); 
+  const [selectedBatchItems, setSelectedBatchItems] = useState({}); 
   const [batchTransferLoading, setBatchTransferLoading] = useState(false);
   const [batchTransferError, setBatchTransferError] = useState('');
 
-  // Determine active branch context (Admin sees what they filter, Staff sees only their branch)
+  // Determine active branch context
   const activeBranchId = isAdmin ? viewingBranch : (currentUser?.branch_id || '');
 
   useEffect(() => {
@@ -77,7 +88,6 @@ export default function AdminApp({ currentUser, supabase }) {
     }
   }, [isAdmin, activeTab]);
 
-  // Automatically sync product creation branch with the admin workspace view
   useEffect(() => {
     if (viewingBranch !== 'ALL') {
       setProductBranch(viewingBranch);
@@ -104,14 +114,35 @@ export default function AdminApp({ currentUser, supabase }) {
     try {
       const { data, error } = await supabase.from('customers').select('*, customer_history(*)').order('created_at', { ascending: false });
       if (!error && data) {
-        const formatted = data.map(c => ({
-          id: c.id,
-          name: c.name,
-          phone: c.phone,
-          branch_id: c.branch_id,
-          totalDebt: c.total_debt || 0,
-          history: c.customer_history ? c.customer_history.sort((a, b) => b.id - a.id) : []
-        }));
+        const formatted = data.map(c => {
+          const rawHistory = c.customer_history || c.history || [];
+          const formattedHistory = rawHistory.map(h => {
+            let parsedItems = [];
+            if (h.items) {
+              if (typeof h.items === 'string') {
+                try { parsedItems = JSON.parse(h.items); } catch (e) { parsedItems = []; }
+              } else if (Array.isArray(h.items)) {
+                parsedItems = h.items;
+              }
+            }
+            return {
+              ...h,
+              id: h.id,
+              total: parseFloat(h.total_amount ?? h.total ?? h.amount ?? 0),
+              items: parsedItems,
+              productId: h.product_id || h.productId
+            };
+          }).sort((a, b) => b.id - a.id);
+
+          return {
+            id: c.id,
+            name: c.name,
+            phone: c.phone,
+            branch_id: c.branch_id,
+            totalDebt: parseFloat(c.total_debt ?? c.totalDebt ?? c.debt ?? 0),
+            history: formattedHistory
+          };
+        });
         setCustomers(formatted);
       }
     } catch (err) { console.error("Erreur clients:", err.message); }
@@ -132,7 +163,29 @@ export default function AdminApp({ currentUser, supabase }) {
     return true;
   };
 
-  // Branch Handlers
+  // --- FINANCIAL MASKING TOGGLE & AUTO-HIDE TIMER ---
+  const handleToggleFinancialVisibility = () => {
+    if (showFinancials) {
+      setShowFinancials(false);
+      if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
+    } else {
+      if (verifyAdminPinBeforeAction()) {
+        setShowFinancials(true);
+        if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
+        // Automatically hide financial numbers after 10 minutes (600,000 ms)
+        autoHideTimerRef.current = setTimeout(() => {
+          setShowFinancials(false);
+        }, 10 * 60 * 1000);
+      }
+    }
+  };
+
+  const formatMoney = (amount) => {
+    if (!showFinancials) return '******';
+    return `${(amount || 0).toLocaleString()} FCFA`;
+  };
+
+  // --- BRANCH HANDLERS ---
   const handleSaveBranch = async (e) => {
     e.preventDefault();
     if (!branchName) return;
@@ -150,10 +203,52 @@ export default function AdminApp({ currentUser, supabase }) {
     } catch (err) { alert(`Erreur: ${err.message}`); }
   };
 
-  // Staff Handlers
+  const handleDeleteBranch = async (branchId) => {
+    if (!verifyAdminPinBeforeAction()) return;
+    if (!window.confirm('Êtes-vous sûr de vouloir supprimer cette succursale ? Cette action est irréversible.')) return;
+    try {
+      const { error } = await supabase.from('branches').delete().eq('id', branchId);
+      if (error) throw error;
+      alert('Succursale supprimée !');
+      
+      if (viewingBranch === branchId) setViewingBranch('');
+      if (storefrontBranch === branchId) setStorefrontBranch('');
+      
+      fetchBranchesFromSupabase();
+    } catch (err) {
+      alert(`Erreur lors de la suppression: ${err.message}`);
+    }
+  };
+
+  const handleReassignStaff = async (staffId, newBranchId) => {
+    if (!verifyAdminPinBeforeAction()) return;
+    try {
+      const targetBranch = newBranchId || null;
+      const { error } = await supabase.from('staff').update({ branch_id: targetBranch }).eq('id', staffId);
+      if (error) throw error;
+      alert('Personnel réassigné avec succès !');
+      fetchStaffFromSupabase();
+    } catch (err) {
+      alert(`Erreur lors de la réassignation: ${err.message}`);
+    }
+  };
+
+  // --- STAFF HANDLERS (WITH ADMIN PIN SECURITY) ---
+  const handleStartEditStaff = (staffMember) => {
+    if (!verifyAdminPinBeforeAction()) return;
+    setEditingStaff(staffMember);
+    setStaffName(staffMember.full_name || '');
+    setStaffPin(staffMember.pin_code || '');
+    setStaffRole(staffMember.role || 'staff');
+    setStaffBranch(staffMember.branch_id || '');
+    setActiveTab('staff');
+  };
+
   const handleSaveStaff = async (e) => {
     e.preventDefault();
     if (!staffName || !staffPin) return;
+    if (!verifyAdminPinBeforeAction()) return;
+
     try {
       const payload = {
         full_name: staffName.trim(),
@@ -176,10 +271,17 @@ export default function AdminApp({ currentUser, supabase }) {
 
   const handleToggleStaffStatus = async (id, currentStatus) => {
     if (!verifyAdminPinBeforeAction()) return;
-    const { error } = await supabase.from('staff').update({ is_active: !currentStatus }).eq('id', id);
-    if (!error) { fetchStaffFromSupabase(); alert('Statut mis à jour !'); }
+    try {
+      const { error } = await supabase.from('staff').update({ is_active: !currentStatus }).eq('id', id);
+      if (error) throw error;
+      fetchStaffFromSupabase(); 
+      alert(currentStatus ? 'Personnel désactivé !' : 'Personnel réactivé !');
+    } catch (err) {
+      alert(`Erreur: ${err.message}`);
+    }
   };
 
+  // --- IMAGE COMPRESSION ---
   const compressImage = (file, maxWidth = 800, maxHeight = 800, quality = 0.75) => { 
     return new Promise((resolve, reject) => {
       const reader = new FileReader(); reader.readAsDataURL(file);
@@ -198,7 +300,7 @@ export default function AdminApp({ currentUser, supabase }) {
     });
   };
 
-  // Product Handlers
+  // --- PRODUCT HANDLERS ---
   const handleSaveProduct = async (e) => {
     e.preventDefault();
     if (!name || !price || quantity === '' || !batch) return;
@@ -313,7 +415,6 @@ export default function AdminApp({ currentUser, supabase }) {
       for (const item of activeItems) {
         const { product, targetBranch, qty } = item;
 
-        // 1. Deduct quantity from HQ product
         const newHqQty = product.quantity - qty;
         const { error: hqError } = await supabase
           .from('products')
@@ -322,7 +423,6 @@ export default function AdminApp({ currentUser, supabase }) {
 
         if (hqError) throw hqError;
 
-        // 2. Check if product already exists in target branch
         const existingTargetProd = products.find(p => 
           p.name.trim().toLowerCase() === product.name.trim().toLowerCase() && 
           String(p.batch_reference || '') === String(product.batch_reference || '') && 
@@ -383,16 +483,26 @@ export default function AdminApp({ currentUser, supabase }) {
     setProducts(prev => prev.map(p => String(p.id) === String(id) ? { ...p, is_archived: archiveState } : p));
   };
 
-  // ---- CONTEXT FILTERING FOR DASHBOARD & METRICS ----
-  const contextProducts = products.filter(p => activeBranchId === 'ALL' || String(p.branch_id || '') === String(activeBranchId));
-  const contextCustomers = customers.filter(c => activeBranchId === 'ALL' || String(c.branch_id || '') === String(activeBranchId));
+  // ---- CONTEXT FILTERING & ROBUST FINANCIAL CALCULATION ----
+  const contextProducts = products.filter(p => {
+    if (activeBranchId === 'ALL' || activeBranchId === '') return true;
+    return String(p.branch_id || '') === String(activeBranchId);
+  });
+
+  const contextCustomers = customers.filter(c => {
+    if (activeBranchId === 'ALL' || activeBranchId === '') return true;
+    return String(c.branch_id || '') === String(activeBranchId);
+  });
 
   const getProductSoldQty = (productId) => {
     return contextCustomers.reduce((acc, c) => acc + (c.history || []).reduce((hAcc, h) => {
-      if (h.items && Array.isArray(h.items)) {
-        const item = h.items.find(i => String(i.productId) === String(productId));
-        return hAcc + (item ? (parseInt(item.qty) || 0) : 0);
-      } else { return hAcc + (String(h.productId) === String(productId) ? (parseInt(h.qty) || 1) : 0); }
+      if (h.items && Array.isArray(h.items) && h.items.length > 0) {
+        const item = h.items.find(i => String(i.productId || i.product_id || i.id) === String(productId));
+        return hAcc + (item ? (parseInt(item.qty || item.quantity) || 0) : 0);
+      } else {
+        const isMatch = String(h.productId || h.product_id || '') === String(productId);
+        return hAcc + (isMatch ? (parseInt(h.qty || h.quantity) || 1) : 0);
+      }
     }, 0), 0);
   };
 
@@ -401,13 +511,23 @@ export default function AdminApp({ currentUser, supabase }) {
     return (parseInt(p.quantity) || 0) + getProductSoldQty(p.id);
   };
 
-  // Accurate Financial Metrics strictly preserved
+  // Financial Metrics Calculations
   const totalInventoryCost = contextProducts.reduce((acc, p) => acc + ((parseFloat(p.cost_price) || 0) * getTrueInitialQty(p)), 0);
   const totalExpectedRevenue = contextProducts.reduce((acc, p) => acc + ((parseFloat(p.price) || 0) * getTrueInitialQty(p)), 0);
   const totalPotentialRetail = contextProducts.filter(p => !p.is_archived).reduce((acc, p) => acc + ((parseFloat(p.price) || 0) * (parseInt(p.quantity) || 0)), 0);
-  const totalGoodsSoldCost = contextProducts.reduce((acc, p) => acc + ((parseFloat(p.cost_price) || 0) * getProductSoldQty(p.id)), 0);
-  const totalSalesRevenue = contextCustomers.reduce((acc, c) => acc + (c.history || []).reduce((hAcc, h) => hAcc + (parseFloat(h.total) || 0), 0), 0);
-  const totalOutstandingDebt = contextCustomers.reduce((acc, c) => acc + (parseFloat(c.totalDebt) || 0), 0);
+  
+  const totalGoodsSoldCost = contextProducts.reduce((acc, p) => {
+    const soldQty = getProductSoldQty(p.id);
+    const unitCost = parseFloat(p.cost_price || p.costPrice) || 0;
+    return acc + (unitCost * soldQty);
+  }, 0);
+
+  const totalSalesRevenue = contextCustomers.reduce((acc, c) => {
+    const customerSales = (c.history || []).reduce((hAcc, h) => hAcc + (parseFloat(h.total || h.total_amount || h.amount) || 0), 0);
+    return acc + customerSales;
+  }, 0);
+
+  const totalOutstandingDebt = contextCustomers.reduce((acc, c) => acc + (parseFloat(c.totalDebt || c.total_debt) || 0), 0);
 
   const uniqueBatches = ['ALL', ...new Set(contextProducts.map(p => p.batch_reference).filter(Boolean))];
   const filteredProducts = contextProducts.filter(p => {
@@ -416,7 +536,6 @@ export default function AdminApp({ currentUser, supabase }) {
     return matchesBatch && matchesArchiveState;
   });
 
-  // Storefront filtered products based on storefrontBranch (Default HQ, switches dynamically)
   const storefrontFilteredProducts = products.filter(p => {
     if (p.is_archived || parseInt(p.quantity) < 1) return false;
     if (storefrontBranch === '') {
@@ -467,32 +586,56 @@ export default function AdminApp({ currentUser, supabase }) {
           </div>
         )}
 
-        {/* FINANCIAL METRICS */}
+        {/* FINANCIAL METRICS WITH PRIVACY MASKING & 10-MIN TIMEOUT */}
         {isAdmin && (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-            <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
-              <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Total Asset Cost</p>
-              <p className="text-lg font-bold text-gray-900 mt-2">{totalInventoryCost.toLocaleString()} FCFA</p>
+          <div className="space-y-3">
+            <div className="flex justify-between items-center px-1">
+              <span className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
+                <Lock className="w-3.5 h-3.5 text-gray-400" /> Performance Financière
+              </span>
+              <button
+                onClick={handleToggleFinancialVisibility}
+                className="flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white hover:bg-gray-100 text-gray-700 transition-all border border-gray-200 shadow-sm cursor-pointer"
+              >
+                {showFinancials ? (
+                  <>
+                    <EyeOff className="w-4 h-4 text-red-500" />
+                    <span>Masquer les chiffres</span>
+                  </>
+                ) : (
+                  <>
+                    <Eye className="w-4 h-4 text-emerald-600" />
+                    <span>Afficher les chiffres (PIN requis)</span>
+                  </>
+                )}
+              </button>
             </div>
-            <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
-              <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Expected Revenue</p>
-              <p className="text-lg font-bold text-indigo-700 mt-2">{totalExpectedRevenue.toLocaleString()} FCFA</p>
-            </div>
-            <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
-              <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Current Stock Value</p>
-              <p className="text-lg font-bold text-emerald-600 mt-2">{totalPotentialRetail.toLocaleString()} FCFA</p>
-            </div>
-            <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
-              <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Cost of Goods Sold</p>
-              <p className="text-lg font-bold text-purple-700 mt-2">{totalGoodsSoldCost.toLocaleString()} FCFA</p>
-            </div>
-            <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
-              <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Total Sales (Rev)</p>
-              <p className="text-lg font-bold text-blue-700 mt-2">{totalSalesRevenue.toLocaleString()} FCFA</p>
-            </div>
-            <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow border-t-4 border-t-red-500">
-              <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Outstanding Debts</p>
-              <p className="text-lg font-bold text-red-600 mt-2">{totalOutstandingDebt.toLocaleString()} FCFA</p>
+
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+              <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Total Asset Cost</p>
+                <p className="text-lg font-bold text-gray-900 mt-2">{formatMoney(totalInventoryCost)}</p>
+              </div>
+              <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Expected Revenue</p>
+                <p className="text-lg font-bold text-indigo-700 mt-2">{formatMoney(totalExpectedRevenue)}</p>
+              </div>
+              <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Current Stock Value</p>
+                <p className="text-lg font-bold text-emerald-600 mt-2">{formatMoney(totalPotentialRetail)}</p>
+              </div>
+              <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Cost of Goods Sold</p>
+                <p className="text-lg font-bold text-purple-700 mt-2">{formatMoney(totalGoodsSoldCost)}</p>
+              </div>
+              <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Total Sales (Rev)</p>
+                <p className="text-lg font-bold text-blue-700 mt-2">{formatMoney(totalSalesRevenue)}</p>
+              </div>
+              <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm hover:shadow-md transition-shadow border-t-4 border-t-red-500">
+                <p className="text-[11px] font-semibold tracking-wider uppercase text-gray-500">Outstanding Debts</p>
+                <p className="text-lg font-bold text-red-600 mt-2">{formatMoney(totalOutstandingDebt)}</p>
+              </div>
             </div>
           </div>
         )}
@@ -508,6 +651,9 @@ export default function AdminApp({ currentUser, supabase }) {
             editingBranch={editingBranch}
             setEditingBranch={setEditingBranch}
             handleSaveBranch={handleSaveBranch}
+            handleDeleteBranch={handleDeleteBranch} 
+            staffList={staffList}                   
+            handleReassignStaff={handleReassignStaff} 
           />
         )}
 
@@ -519,6 +665,8 @@ export default function AdminApp({ currentUser, supabase }) {
             setProductBranch={setProductBranch}
             name={name}
             setName={setName}
+            description={description}           
+            setDescription={setDescription}     
             batch={batch}
             setBatch={setBatch}
             costPrice={costPrice}
@@ -592,6 +740,7 @@ export default function AdminApp({ currentUser, supabase }) {
             setEditingStaff={setEditingStaff}
             handleSaveStaff={handleSaveStaff}
             handleToggleStaffStatus={handleToggleStaffStatus}
+            handleStartEditStaff={handleStartEditStaff}
           />
         )}
       </div>
