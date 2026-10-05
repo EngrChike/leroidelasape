@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Users, Eye, Pencil, Archive, RotateCcw, X, Layers, UserCog, Key, Store, MapPin, Filter } from 'lucide-react';
+import { Package, Users, Eye, Pencil, Archive, X, Layers, UserCog, Store, MapPin, Filter, ArrowRightLeft, CheckCircle2 } from 'lucide-react';
 import SalesLedger from './SalesLedger';
 
 export default function AdminApp({ currentUser, supabase }) {
@@ -14,23 +14,21 @@ export default function AdminApp({ currentUser, supabase }) {
   const [branches, setBranches] = useState([]);
   
   // Branch Context Filters
-  const [viewingBranch, setViewingBranch] = useState('ALL'); // HQ Dashboard Filter
+  const [viewingBranch, setViewingBranch] = useState('ALL'); 
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('ALL');
   const [showArchived, setShowArchived] = useState(false);
 
-  // Branch form states
+  // Form states (Branch, Staff, Product)
   const [branchName, setBranchName] = useState('');
   const [branchLocation, setBranchLocation] = useState('');
   const [editingBranch, setEditingBranch] = useState(null);
 
-  // Staff form states
   const [staffName, setStaffName] = useState('');
   const [staffPin, setStaffPin] = useState('');
   const [staffRole, setStaffRole] = useState('staff');
   const [staffBranch, setStaffBranch] = useState('');
   const [editingStaff, setEditingStaff] = useState(null);
 
-  // Inventory forms states
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [costPrice, setCostPrice] = useState('');
@@ -43,386 +41,315 @@ export default function AdminApp({ currentUser, supabase }) {
   const [uploading, setUploading] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
 
-  // Determine active branch context (Admin sees what they filter, Staff sees only their branch)
+  // Stock Transfer States
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [transferProduct, setTransferProduct] = useState(null);
+  const [transferToBranch, setTransferToBranch] = useState('');
+  const [transferQty, setTransferQty] = useState('');
+
+  // Active Context
   const activeBranchId = isAdmin ? viewingBranch : (currentUser?.branch_id || 'ALL');
 
   useEffect(() => {
     fetchBranchesFromSupabase();
     fetchProducts();
     fetchCustomersFromSupabase();
-    if (isAdmin) {
-      fetchStaffFromSupabase();
-    }
+    if (isAdmin) fetchStaffFromSupabase();
   }, [isAdmin, activeTab]);
 
   const fetchBranchesFromSupabase = async () => {
-    try {
-      const { data, error } = await supabase.from('branches').select('*').order('created_at', { ascending: true });
-      if (!error && data) setBranches(data);
-    } catch (err) { console.error("Erreur branches:", err); }
+    const { data, error } = await supabase.from('branches').select('*').order('created_at', { ascending: true });
+    if (!error && data) setBranches(data);
   };
 
   const fetchProducts = async () => {
-    try {
-      const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false });
-      if (!error && data) setProducts(data);
-    } catch (err) { console.error("Erreur produits:", err); }
+    const { data, error } = await supabase.from('products').select('*').order('created_at', { ascending: false });
+    if (!error && data) setProducts(data);
   };
 
   const fetchCustomersFromSupabase = async () => {
-    try {
-      const { data, error } = await supabase.from('customers').select('*, customer_history(*)').order('created_at', { ascending: false });
-      if (!error && data) {
-        const formatted = data.map(c => ({
-          id: c.id,
-          name: c.name,
-          phone: c.phone,
-          branch_id: c.branch_id,
-          totalDebt: c.total_debt || 0,
-          history: c.customer_history ? c.customer_history.sort((a, b) => b.id - a.id) : []
-        }));
-        setCustomers(formatted);
-      }
-    } catch (err) { console.error("Erreur clients:", err.message); }
+    const { data, error } = await supabase.from('customers').select('*, customer_history(*)').order('created_at', { ascending: false });
+    if (!error && data) {
+      const formatted = data.map(c => ({
+        id: c.id, name: c.name, phone: c.phone, branch_id: c.branch_id, totalDebt: c.total_debt || 0,
+        history: c.customer_history ? c.customer_history.sort((a, b) => b.id - a.id) : []
+      }));
+      setCustomers(formatted);
+    }
   };
 
   const fetchStaffFromSupabase = async () => {
-    try {
-      const { data, error } = await supabase.from('staff').select('*').order('created_at', { ascending: false });
-      if (!error && data) setStaffList(data);
-    } catch (err) { console.error("Erreur personnel:", err); }
+    const { data, error } = await supabase.from('staff').select('*').order('created_at', { ascending: false });
+    if (!error && data) setStaffList(data);
   };
 
   const verifyAdminPinBeforeAction = () => {
-    const adminPin = prompt("Sécurité Admin : Entrez votre code PIN Administrateur pour confirmer :");
+    const adminPin = prompt("Admin Security: Enter your PIN to confirm:");
     if (!adminPin) return false;
     const verifyingAdmin = staffList.find(s => s.pin_code === adminPin && s.role === 'admin' && s.is_active);
-    if (!verifyingAdmin) { alert("Code PIN incorrect."); return false; }
+    if (!verifyingAdmin) { alert("Invalid PIN."); return false; }
     return true;
   };
 
-  // Branch Handlers
+  // --- STOCK TRANSFER LOGIC ---
+  const handleOpenTransfer = (product) => {
+    setTransferProduct(product);
+    setTransferQty('');
+    setTransferToBranch('');
+    setTransferModalOpen(true);
+  };
+
+  const executeStockTransfer = async (e) => {
+    e.preventDefault();
+    const qtyToTransfer = parseInt(transferQty);
+    
+    if (!transferToBranch || qtyToTransfer <= 0 || qtyToTransfer > transferProduct.quantity) {
+      alert("Invalid transfer details or insufficient stock.");
+      return;
+    }
+
+    try {
+      // 1. Deduct from source product
+      const newSourceQty = transferProduct.quantity - qtyToTransfer;
+      await supabase.from('products').update({ quantity: newSourceQty }).eq('id', transferProduct.id);
+
+      // 2. Check if this exact product/batch already exists in the destination branch
+      const { data: existingDestProd } = await supabase.from('products')
+        .select('*')
+        .eq('name', transferProduct.name)
+        .eq('batch_reference', transferProduct.batch_reference)
+        .eq('branch_id', transferToBranch === 'HQ' ? null : transferToBranch)
+        .single();
+
+      if (existingDestProd) {
+        // Add to existing branch stock
+        await supabase.from('products').update({ 
+          quantity: existingDestProd.quantity + qtyToTransfer 
+        }).eq('id', existingDestProd.id);
+      } else {
+        // Create new inventory row for the branch
+        const { id, created_at, branch_id, ...productData } = transferProduct;
+        const newProd = {
+          ...productData,
+          branch_id: transferToBranch === 'HQ' ? null : transferToBranch,
+          quantity: qtyToTransfer,
+          initial_quantity: qtyToTransfer
+        };
+        await supabase.from('products').insert([newProd]);
+      }
+
+      alert('Stock successfully transferred!');
+      setTransferModalOpen(false);
+      fetchProducts();
+    } catch (err) {
+      alert(`Transfer failed: ${err.message}`);
+    }
+  };
+
+  // --- SAVE HANDLERS ---
   const handleSaveBranch = async (e) => {
     e.preventDefault();
-    if (!branchName) return;
-    try {
-      const payload = { name: branchName.trim(), location: branchLocation.trim() };
-      if (editingBranch) {
-        await supabase.from('branches').update(payload).eq('id', editingBranch.id);
-        alert('Succursale mise à jour !');
-      } else {
-        await supabase.from('branches').insert([payload]);
-        alert('Nouvelle succursale créée !');
-      }
-      setBranchName(''); setBranchLocation(''); setEditingBranch(null);
-      fetchBranchesFromSupabase();
-    } catch (err) { alert(`Erreur: ${err.message}`); }
+    const payload = { name: branchName.trim(), location: branchLocation.trim() };
+    if (editingBranch) {
+      await supabase.from('branches').update(payload).eq('id', editingBranch.id);
+    } else {
+      await supabase.from('branches').insert([payload]);
+    }
+    setBranchName(''); setBranchLocation(''); setEditingBranch(null); fetchBranchesFromSupabase();
   };
 
-  // Staff Handlers
   const handleSaveStaff = async (e) => {
     e.preventDefault();
-    if (!staffName || !staffPin) return;
-    try {
-      const payload = {
-        full_name: staffName.trim(),
-        pin_code: staffPin.trim(),
-        role: staffRole,
-        branch_id: staffBranch || null,
-        is_active: true
-      };
-      if (editingStaff) {
-        await supabase.from('staff').update(payload).eq('id', editingStaff.id);
-        alert('Personnel mis à jour !');
-      } else {
-        await supabase.from('staff').insert([payload]);
-        alert('Nouveau membre ajouté !');
-      }
-      setStaffName(''); setStaffPin(''); setStaffRole('staff'); setStaffBranch(''); setEditingStaff(null);
-      fetchStaffFromSupabase();
-    } catch (err) { alert(`Erreur: ${err.message}`); }
+    const payload = { full_name: staffName.trim(), pin_code: staffPin.trim(), role: staffRole, branch_id: staffBranch || null, is_active: true };
+    if (editingStaff) await supabase.from('staff').update(payload).eq('id', editingStaff.id);
+    else await supabase.from('staff').insert([payload]);
+    setStaffName(''); setStaffPin(''); setStaffRole('staff'); setStaffBranch(''); setEditingStaff(null); fetchStaffFromSupabase();
   };
 
-  const handleToggleStaffStatus = async (id, currentStatus) => {
-    if (!verifyAdminPinBeforeAction()) return;
-    const { error } = await supabase.from('staff').update({ is_active: !currentStatus }).eq('id', id);
-    if (!error) { fetchStaffFromSupabase(); alert('Statut mis à jour !'); }
-  };
-
-  const compressImage = (file, maxWidth = 800, maxHeight = 800, quality = 0.75) => { /* Original logic */
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader(); reader.readAsDataURL(file);
-      reader.onload = (event) => {
-        const img = new Image(); img.src = event.target.result;
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          let width = img.width; let height = img.height;
-          if (width > height) { if (width > maxWidth) { height = Math.round((height * maxWidth) / width); width = maxWidth; } }
-          else { if (height > maxHeight) { width = Math.round((width * maxHeight) / height); height = maxHeight; } }
-          canvas.width = width; canvas.height = height;
-          const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, width, height);
-          canvas.toBlob((blob) => resolve(new File([blob], file.name, { type: 'image/jpeg' })), 'image/jpeg', quality);
-        };
-      };
-    });
-  };
-
-  // Product Handlers
   const handleSaveProduct = async (e) => {
     e.preventDefault();
-    if (!name || !price || quantity === '' || !batch) return;
     setUploading(true);
     let image_url = editingProduct ? editingProduct.image_url : 'https://images.unsplash.com/photo-1522337660859-02fbefca4702?auto=format&fit=crop&w=800&q=80';
     try {
-      if (imageFile) {
-        let fileToUpload = await compressImage(imageFile, 800, 800, 0.75);
-        const fileName = `${Date.now()}_${fileToUpload.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
-        const { error: upErr } = await supabase.storage.from('product-images').upload(fileName, fileToUpload);
-        if (upErr) throw upErr;
-        image_url = supabase.storage.from('product-images').getPublicUrl(fileName)?.data?.publicUrl || image_url;
-      }
-      
       const parsedQty = parseInt(quantity) || 0;
       const parsedInitQty = initialQuantity !== '' ? parseInt(initialQuantity) : (editingProduct ? editingProduct.initial_quantity : parsedQty);
 
       const payload = { 
-        name: name.trim(), 
-        description: description.trim(), 
-        price: parseFloat(price),
-        cost_price: parseFloat(costPrice) || 0,
-        image_url, 
-        quantity: parsedQty, 
-        initial_quantity: parsedInitQty || parsedQty,
-        stock_status: parsedQty > 0, 
-        batch_reference: batch.trim().toUpperCase(),
-        branch_id: productBranch || null, // Associates inventory with HQ or a Branch
-        is_archived: false
+        name: name.trim(), price: parseFloat(price), cost_price: parseFloat(costPrice) || 0,
+        image_url, quantity: parsedQty, initial_quantity: parsedInitQty || parsedQty,
+        stock_status: parsedQty > 0, batch_reference: batch.trim().toUpperCase(),
+        branch_id: productBranch || null, is_archived: false
       };
 
       if (editingProduct) await supabase.from('products').update(payload).eq('id', editingProduct.id);
       else await supabase.from('products').insert([payload]);
 
-      handleCancelEditProduct();
-      await fetchProducts();
-      alert('Inventaire enregistré avec succès !');
-    } catch (err) { alert(`Erreur: ${err.message}`); } finally { setUploading(false); }
-  };
-
-  const handleStartEditProduct = (p) => {
-    setEditingProduct(p); setName(p.name); setPrice(p.price); setCostPrice(p.cost_price || '');
-    setQuantity(p.quantity); setInitialQuantity(p.initial_quantity !== undefined ? p.initial_quantity : p.quantity);
-    setDescription(p.description || ''); setBatch(p.batch_reference || ''); setProductBranch(p.branch_id || '');
+      handleCancelEditProduct(); await fetchProducts();
+    } catch (err) { alert(`Error: ${err.message}`); } finally { setUploading(false); }
   };
 
   const handleCancelEditProduct = () => {
     setEditingProduct(null); setName(''); setPrice(''); setCostPrice(''); setQuantity(''); 
-    setInitialQuantity(''); setDescription(''); setBatch(''); setImageFile(null); setProductBranch('');
+    setInitialQuantity(''); setBatch(''); setImageFile(null); setProductBranch('');
   };
 
   const handleUpdateStockVolume = async (id, newVolume) => {
     const parsedVolume = parseInt(newVolume) || 0;
-    await supabase.from('products').update({ quantity: parsedVolume, stock_status: parsedVolume > 0 }).eq('id', id);
-    setProducts(prev => prev.map(p => String(p.id) === String(id) ? { ...p, quantity: parsedVolume, stock_status: parsedVolume > 0 } : p));
+    await supabase.from('products').update({ quantity: parsedVolume }).eq('id', id);
+    fetchProducts();
   };
 
-  const handleArchiveProduct = async (id, archiveState = true) => {
-    if (!window.confirm(archiveState ? 'Archiver ce produit ?' : 'Restaurer ce produit ?')) return;
-    await supabase.from('products').update({ is_archived: archiveState }).eq('id', id);
-    setProducts(prev => prev.map(p => String(p.id) === String(id) ? { ...p, is_archived: archiveState } : p));
-  };
-
-  // ---- CONTEXT FILTERING FOR DASHBOARD & METRICS ----
-  const contextProducts = products.filter(p => activeBranchId === 'ALL' || String(p.branch_id) === String(activeBranchId));
-  const contextCustomers = customers.filter(c => activeBranchId === 'ALL' || String(c.branch_id) === String(activeBranchId));
-
-  const getProductSoldQty = (productId) => {
-    return contextCustomers.reduce((acc, c) => acc + (c.history || []).reduce((hAcc, h) => {
-      if (h.items && Array.isArray(h.items)) {
-        const item = h.items.find(i => String(i.productId) === String(productId));
-        return hAcc + (item ? (parseInt(item.qty) || 0) : 0);
-      } else { return hAcc + (String(h.productId) === String(productId) ? (parseInt(h.qty) || 1) : 0); }
-    }, 0), 0);
-  };
-
-  const getTrueInitialQty = (p) => {
-    if (p.initial_quantity !== undefined && p.initial_quantity !== null && p.initial_quantity !== '') return parseInt(p.initial_quantity);
-    return (parseInt(p.quantity) || 0) + getProductSoldQty(p.id);
-  };
-
-  // Accurate Financial Metrics strictly preserved
-  const totalInventoryCost = contextProducts.reduce((acc, p) => acc + ((parseFloat(p.cost_price) || 0) * getTrueInitialQty(p)), 0);
-  const totalExpectedRevenue = contextProducts.reduce((acc, p) => acc + ((parseFloat(p.price) || 0) * getTrueInitialQty(p)), 0);
-  const totalPotentialRetail = contextProducts.filter(p => !p.is_archived).reduce((acc, p) => acc + ((parseFloat(p.price) || 0) * (parseInt(p.quantity) || 0)), 0);
-  const totalGoodsSoldCost = contextProducts.reduce((acc, p) => acc + ((parseFloat(p.cost_price) || 0) * getProductSoldQty(p.id)), 0);
-  const totalSalesRevenue = contextCustomers.reduce((acc, c) => acc + (c.history || []).reduce((hAcc, h) => hAcc + (parseFloat(h.total) || 0), 0), 0);
-  const totalOutstandingDebt = contextCustomers.reduce((acc, c) => acc + (parseFloat(c.totalDebt) || 0), 0);
+  // --- CONTEXT FILTERING ---
+  const contextProducts = products.filter(p => activeBranchId === 'ALL' || String(p.branch_id || 'HQ') === String(activeBranchId));
+  const contextCustomers = customers.filter(c => activeBranchId === 'ALL' || String(c.branch_id || 'HQ') === String(activeBranchId));
 
   const uniqueBatches = ['ALL', ...new Set(contextProducts.map(p => p.batch_reference).filter(Boolean))];
   const filteredProducts = contextProducts.filter(p => {
     const matchesBatch = selectedBatchFilter === 'ALL' || p.batch_reference === selectedBatchFilter;
-    const matchesArchiveState = showArchived ? p.is_archived : !p.is_archived;
-    return matchesBatch && matchesArchiveState;
+    return matchesBatch && (showArchived ? p.is_archived : !p.is_archived);
   });
 
-  const frontPageProducts = contextProducts.filter(p => !p.is_archived && parseInt(p.quantity) >= 1);
-
   return (
-    <div className="bg-[#f5f5f7] text-gray-900 font-sans p-3 sm:p-6 lg:p-8">
-      <div className="max-w-7xl mx-auto space-y-6">
+    <div className="bg-slate-50 min-h-screen text-slate-800 font-sans p-4 sm:p-8">
+      <div className="max-w-7xl mx-auto space-y-8">
         
-        {/* HEADER NAVIGATION */}
+        {/* HEADER NAVIGATION - MATURE DESIGN */}
         {isAdmin ? (
-          <div className="flex flex-col gap-4 bg-white p-4 rounded-xl border border-gray-200 shadow-xs">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex flex-wrap gap-2">
-                <button onClick={() => setActiveTab('inventory')} className={`px-4 py-2 text-xs sm:text-sm font-bold rounded-lg flex items-center space-x-2 ${activeTab === 'inventory' ? 'bg-[#f68b1e] text-white' : 'bg-gray-100 text-gray-600'}`}><Package className="w-4 h-4" /> <span>Inventory</span></button>
-                <button onClick={() => setActiveTab('customers')} className={`px-4 py-2 text-xs sm:text-sm font-bold rounded-lg flex items-center space-x-2 ${activeTab === 'customers' ? 'bg-[#f68b1e] text-white' : 'bg-gray-100 text-gray-600'}`}><Users className="w-4 h-4" /> <span>Sales Ledger</span></button>
-                <button onClick={() => setActiveTab('storefront')} className={`px-4 py-2 text-xs sm:text-sm font-bold rounded-lg flex items-center space-x-2 ${activeTab === 'storefront' ? 'bg-[#f68b1e] text-white' : 'bg-gray-100 text-gray-600'}`}><Eye className="w-4 h-4" /> <span>Storefront</span></button>
-                <button onClick={() => setActiveTab('staff')} className={`px-4 py-2 text-xs sm:text-sm font-bold rounded-lg flex items-center space-x-2 ${activeTab === 'staff' ? 'bg-[#f68b1e] text-white' : 'bg-gray-100 text-gray-600'}`}><UserCog className="w-4 h-4" /> <span>Staff</span></button>
-                <button onClick={() => setActiveTab('branches')} className={`px-4 py-2 text-xs sm:text-sm font-bold rounded-lg flex items-center space-x-2 ${activeTab === 'branches' ? 'bg-[#f68b1e] text-white' : 'bg-gray-100 text-gray-600'}`}><Store className="w-4 h-4" /> <span>Branches & HQ</span></button>
-              </div>
+          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6 bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex flex-wrap gap-3">
+              {[
+                { id: 'inventory', icon: Package, label: 'Inventory' },
+                { id: 'customers', icon: Users, label: 'Sales Ledger' },
+                { id: 'storefront', icon: Eye, label: 'Storefront' },
+                { id: 'staff', icon: UserCog, label: 'Staff' },
+                { id: 'branches', icon: Store, label: 'Branches' }
+              ].map(tab => (
+                <button 
+                  key={tab.id} onClick={() => setActiveTab(tab.id)}
+                  className={`px-5 py-2.5 text-sm font-semibold rounded-xl flex items-center space-x-2 transition-all ${
+                    activeTab === tab.id ? 'bg-slate-900 text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  <tab.icon className="w-4 h-4" /> <span>{tab.label}</span>
+                </button>
+              ))}
+            </div>
 
-              {/* ADMIN BRANCH GLOBAL FILTER */}
-              <div className="flex items-center gap-2 border p-2 rounded-lg bg-gray-50">
-                <Filter className="w-4 h-4 text-gray-500" />
-                <select value={viewingBranch} onChange={(e) => setViewingBranch(e.target.value)} className="bg-transparent text-xs font-bold text-gray-800 outline-none cursor-pointer">
-                  <option value="ALL">HQ Global View (All Branches)</option>
-                  {branches.map(b => <option key={b.id} value={b.id}>Vue: {b.name}</option>)}
-                </select>
-              </div>
+            <div className="flex items-center gap-3 border border-slate-200 p-2.5 rounded-xl bg-slate-50 w-full md:w-auto">
+              <Filter className="w-5 h-5 text-slate-400" />
+              <select value={viewingBranch} onChange={(e) => setViewingBranch(e.target.value)} className="bg-transparent text-sm font-semibold text-slate-700 outline-none cursor-pointer w-full">
+                <option value="ALL">Global View (All Branches)</option>
+                <option value="HQ">Headquarters (HQ)</option>
+                {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
             </div>
           </div>
         ) : (
-          <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs flex justify-between items-center">
-            <h2 className="text-sm font-black uppercase text-gray-800 flex items-center gap-2">
-              <Users className="w-4 h-4 text-[#f68b1e]" /> Interface de Vente - {currentUser.full_name}
+          <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm flex justify-between items-center">
+            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+              <Users className="w-5 h-5 text-indigo-600" /> Sales Terminal - {currentUser.full_name}
             </h2>
-            <span className="text-xs font-bold bg-gray-100 px-3 py-1 rounded-full text-gray-600">
-              {branches.find(b => b.id === currentUser.branch_id)?.name || 'Succursale Non Assignée'}
+            <span className="text-sm font-semibold bg-indigo-50 px-4 py-1.5 rounded-full text-indigo-700">
+              {branches.find(b => b.id === currentUser.branch_id)?.name || 'Headquarters'}
             </span>
           </div>
         )}
 
-        {/* FINANCIAL METRICS (Dynamically updates based on HQ/Branch Filter) */}
-        {isAdmin && (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
-            <div className="bg-white p-4 rounded-xl border shadow-xs">
-              <p className="text-[10px] font-extrabold uppercase text-gray-400">Total Achat Initial</p>
-              <p className="text-sm sm:text-lg font-black text-gray-900 mt-1">{totalInventoryCost.toLocaleString()} FCFA</p>
-            </div>
-            <div className="bg-white p-4 rounded-xl border shadow-xs">
-              <p className="text-[10px] font-extrabold uppercase text-gray-400">Total Vente Initiale</p>
-              <p className="text-sm sm:text-lg font-black text-indigo-600 mt-1">{totalExpectedRevenue.toLocaleString()} FCFA</p>
-            </div>
-            <div className="bg-white p-4 rounded-xl border shadow-xs">
-              <p className="text-[10px] font-extrabold uppercase text-gray-400">Valeur Stock Actuel</p>
-              <p className="text-sm sm:text-lg font-black text-orange-600 mt-1">{totalPotentialRetail.toLocaleString()} FCFA</p>
-            </div>
-            <div className="bg-white p-4 rounded-xl border shadow-xs">
-              <p className="text-[10px] font-extrabold uppercase text-gray-400">Coût Marchandises</p>
-              <p className="text-sm sm:text-lg font-black text-purple-600 mt-1">{totalGoodsSoldCost.toLocaleString()} FCFA</p>
-            </div>
-            <div className="bg-white p-4 rounded-xl border shadow-xs">
-              <p className="text-[10px] font-extrabold uppercase text-gray-400">Total Ventes (Rev)</p>
-              <p className="text-sm sm:text-lg font-black text-blue-600 mt-1">{totalSalesRevenue.toLocaleString()} FCFA</p>
-            </div>
-            <div className="bg-white p-4 rounded-xl border shadow-xs">
-              <p className="text-[10px] font-extrabold uppercase text-gray-400">Dettes Clients Restantes</p>
-              <p className="text-sm sm:text-lg font-black text-red-600 mt-1">{totalOutstandingDebt.toLocaleString()} FCFA</p>
-            </div>
-          </div>
-        )}
+        {/* TAB 2: INVENTORY & TRANSFERS */}
+        {isAdmin && activeTab === 'inventory' && (
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
+            
+            {/* ADD / EDIT FORM */}
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-fit">
+              <div className="flex justify-between items-center mb-6 pb-4 border-b border-slate-100">
+                <h3 className="font-bold text-base text-slate-800">{editingProduct ? 'Edit Product' : 'Add New Stock'}</h3>
+                {editingProduct && <button onClick={handleCancelEditProduct} className="text-slate-400 hover:text-red-500 text-sm flex items-center"><X className="w-4 h-4 mr-1" /> Cancel</button>}
+              </div>
+              <form onSubmit={handleSaveProduct} className="space-y-5">
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">Assign Location</label>
+                  <select value={productBranch} onChange={e => setProductBranch(e.target.value)} className="w-full border border-slate-300 p-3 text-sm rounded-xl bg-slate-50 font-medium text-slate-900 focus:ring-2 focus:ring-slate-900 outline-none" required>
+                    <option value="">-- Select Branch or HQ --</option>
+                    <option value="HQ">Headquarters (HQ)</option>
+                    {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                  </select>
+                </div>
+                
+                <div>
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">Product Details</label>
+                  <input type="text" placeholder="Product Name" value={name} onChange={e => setName(e.target.value)} className="w-full border border-slate-300 p-3 text-sm rounded-xl mb-3 focus:ring-2 focus:ring-slate-900 outline-none" required />
+                  <input type="text" placeholder="Batch Reference (e.g. BATCH-01)" value={batch} onChange={e => setBatch(e.target.value)} className="w-full border border-slate-300 p-3 text-sm rounded-xl uppercase focus:ring-2 focus:ring-slate-900 outline-none" required />
+                </div>
 
-        {/* TAB 1: BRANCHES & HQ MANAGEMENT */}
-        {isAdmin && activeTab === 'branches' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm h-fit">
-              <h3 className="font-bold text-xs uppercase text-gray-700 mb-4 pb-2 border-b">
-                {editingBranch ? 'Modifier la Succursale' : 'Créer une Succursale / QG'}
-              </h3>
-              <form onSubmit={handleSaveBranch} className="space-y-3.5">
-                <input type="text" placeholder="Nom (ex: Headquarter, Branch A)" value={branchName} onChange={e => setBranchName(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg" required />
-                <input type="text" placeholder="Localisation (ex: Abidjan Centre)" value={branchLocation} onChange={e => setBranchLocation(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg" />
-                <button type="submit" className="w-full bg-[#f68b1e] text-white text-xs py-3 rounded-lg font-bold uppercase">
-                  {editingBranch ? 'Mettre à jour' : 'Créer Succursale'}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">Cost Price</label>
+                    <input type="number" value={costPrice} onChange={e => setCostPrice(e.target.value)} className="w-full border border-slate-300 p-3 text-sm rounded-xl focus:ring-2 focus:ring-slate-900 outline-none" required />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">Selling Price</label>
+                    <input type="number" value={price} onChange={e => setPrice(e.target.value)} className="w-full border border-slate-300 p-3 text-sm rounded-xl focus:ring-2 focus:ring-slate-900 outline-none" required />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">Current Qty</label>
+                    <input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} className="w-full border border-slate-300 p-3 text-sm rounded-xl focus:ring-2 focus:ring-slate-900 outline-none" required />
+                  </div>
+                </div>
+
+                <button type="submit" disabled={uploading} className="w-full bg-slate-900 text-white text-sm py-4 rounded-xl font-bold hover:bg-slate-800 transition-colors">
+                  {uploading ? 'Processing...' : 'Save Product'}
                 </button>
               </form>
             </div>
-            <div className="lg:col-span-2 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-              <h3 className="font-bold text-xs uppercase text-gray-700 pb-3 border-b flex items-center"><MapPin className="w-4 h-4 mr-2"/> Réseau de Succursales</h3>
-              <table className="w-full text-left text-xs mt-3">
-                <thead>
-                  <tr className="bg-gray-50 text-gray-400 font-bold border-b">
-                    <th className="p-2.5">Nom de la Succursale</th>
-                    <th className="p-2.5">Localisation</th>
-                    <th className="p-2.5 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {branches.map(b => (
-                    <tr key={b.id} className="hover:bg-gray-50/50 border-b last:border-0">
-                      <td className="p-2.5 font-bold text-gray-800">{b.name}</td>
-                      <td className="p-2.5 text-gray-500">{b.location || 'N/A'}</td>
-                      <td className="p-2.5 text-center">
-                        <button onClick={() => { setEditingBranch(b); setBranchName(b.name); setBranchLocation(b.location); }} className="text-blue-500 font-bold hover:underline">Éditer</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
 
-        {/* TAB 2: INVENTORY MANAGEMENT */}
-        {isAdmin && activeTab === 'inventory' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm h-fit">
-              <div className="flex justify-between items-center mb-4 pb-2 border-b">
-                <h3 className="font-bold text-xs uppercase text-gray-700">{editingProduct ? 'Modifier le produit' : 'Ajouter au Stock (HQ/Branch)'}</h3>
-                {editingProduct && <button onClick={handleCancelEditProduct} className="text-gray-400 hover:text-red-500 text-xs flex"><X className="w-3.5 h-3.5 mr-1" /> Annuler</button>}
-              </div>
-              <form onSubmit={handleSaveProduct} className="space-y-3.5">
-                <select value={productBranch} onChange={e => setProductBranch(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg bg-gray-50 font-bold text-indigo-700" required>
-                  <option value="">-- Assigner à une Succursale (Requis) --</option>
-                  {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                </select>
-                <input type="text" placeholder="Nom du produit" value={name} onChange={e => setName(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg" required />
-                <input type="text" placeholder="Batch Reference" value={batch} onChange={e => setBatch(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg uppercase" required />
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="text-[10px] text-gray-400 font-bold block mb-1">Prix Achat</label><input type="number" value={costPrice} onChange={e => setCostPrice(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg" required /></div>
-                  <div><label className="text-[10px] text-gray-400 font-bold block mb-1">Prix Vente</label><input type="number" value={price} onChange={e => setPrice(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg" required /></div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div><label className="text-[10px] text-gray-400 font-bold block mb-1">Qté Initiale</label><input type="number" value={initialQuantity} onChange={e => setInitialQuantity(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg" /></div>
-                  <div><label className="text-[10px] text-gray-400 font-bold block mb-1">Qté Actuelle</label><input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg" required /></div>
-                </div>
-                <input type="file" accept="image/*" onChange={e => setImageFile(e.target.files[0])} className="w-full text-xs" />
-                <button type="submit" disabled={uploading} className="w-full bg-[#f68b1e] text-white text-xs py-3 rounded-lg font-bold uppercase">{uploading ? 'Upload...' : 'Enregistrer Stock'}</button>
-              </form>
-            </div>
-
-            <div className="lg:col-span-2 bg-white p-5 rounded-xl border border-gray-200 shadow-sm space-y-4">
-              <div className="flex flex-col sm:flex-row justify-between pb-3 border-b gap-3">
-                <h3 className="font-bold text-xs uppercase text-gray-700 flex items-center"><Layers className="w-4 h-4 mr-1.5 text-orange-600" /> Catalogue des Produits</h3>
-                <div className="flex gap-2">
-                  <button onClick={() => setShowArchived(!showArchived)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-100">{showArchived ? 'Voir Actifs' : 'Voir Archivés'}</button>
-                  <select value={selectedBatchFilter} onChange={e => setSelectedBatchFilter(e.target.value)} className="border p-1.5 text-xs rounded-lg bg-gray-50 font-bold">{uniqueBatches.map(b => <option key={b} value={b}>{b}</option>)}</select>
+            {/* PRODUCT CATALOGUE */}
+            <div className="xl:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm space-y-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center pb-4 border-b border-slate-100 gap-4">
+                <h3 className="font-bold text-base text-slate-800 flex items-center"><Layers className="w-5 h-5 mr-2 text-slate-900" /> Master Inventory</h3>
+                <div className="flex gap-3 w-full sm:w-auto">
+                  <button onClick={() => setShowArchived(!showArchived)} className="px-4 py-2 rounded-xl text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200">
+                    {showArchived ? 'View Active' : 'View Archived'}
+                  </button>
                 </div>
               </div>
+              
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs min-w-[600px]">
-                  <thead><tr className="bg-gray-50 text-gray-400 font-bold border-b"><th className="p-2.5">Branch</th><th className="p-2.5">Article</th><th className="p-2.5">Achat/Vente</th><th className="p-2.5 text-center">Stock</th><th className="p-2.5 text-center">Actions</th></tr></thead>
-                  <tbody className="divide-y divide-gray-100">
+                <table className="w-full text-left text-sm whitespace-nowrap">
+                  <thead>
+                    <tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200">
+                      <th className="p-4 rounded-tl-xl">Location</th>
+                      <th className="p-4">Item & Batch</th>
+                      <th className="p-4">Cost / Sell</th>
+                      <th className="p-4 text-center">Stock</th>
+                      <th className="p-4 text-right rounded-tr-xl">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
                     {filteredProducts.map(p => (
-                      <tr key={p.id} className={p.is_archived ? 'opacity-60 bg-gray-50' : 'hover:bg-gray-50'}>
-                        <td className="p-2.5 text-[10px] font-black text-indigo-600">{branches.find(b => b.id === p.branch_id)?.name || 'HQ'}</td>
-                        <td className="p-2.5 font-bold flex items-center gap-2"><img src={p.image_url} alt="" className="w-8 h-8 rounded" />{p.name}</td>
-                        <td className="p-2.5 text-gray-500">{p.cost_price?.toLocaleString()} / <span className="text-orange-600 font-bold">{p.price?.toLocaleString()}</span></td>
-                        <td className="p-2.5 text-center"><input type="number" value={p.quantity} onChange={(e) => handleUpdateStockVolume(p.id, e.target.value)} className="w-14 border text-center p-1 rounded font-bold" /></td>
-                        <td className="p-2.5 text-center space-x-2">
-                          <button onClick={() => handleStartEditProduct(p)} className="text-blue-500"><Pencil className="w-4 h-4" /></button>
-                          <button onClick={() => handleArchiveProduct(p.id, !p.is_archived)} className={p.is_archived ? "text-green-600" : "text-purple-600"}><Archive className="w-4 h-4" /></button>
+                      <tr key={p.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4">
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold ${!p.branch_id ? 'bg-indigo-50 text-indigo-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                            {!p.branch_id || p.branch_id === 'HQ' ? 'HQ' : branches.find(b => b.id === p.branch_id)?.name}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <p className="font-bold text-slate-900">{p.name}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">{p.batch_reference}</p>
+                        </td>
+                        <td className="p-4 text-slate-600">
+                          {p.cost_price?.toLocaleString()} / <span className="text-slate-900 font-bold">{p.price?.toLocaleString()}</span>
+                        </td>
+                        <td className="p-4 text-center">
+                          <input type="number" value={p.quantity} onChange={(e) => handleUpdateStockVolume(p.id, e.target.value)} className="w-20 border border-slate-300 text-center p-2 rounded-lg font-bold bg-white focus:ring-2 focus:ring-slate-900 outline-none" />
+                        </td>
+                        <td className="p-4 text-right space-x-3">
+                          <button onClick={() => handleOpenTransfer(p)} className="text-slate-600 hover:text-indigo-600 font-medium text-sm inline-flex items-center" title="Transfer Stock">
+                            <ArrowRightLeft className="w-4 h-4 mr-1"/> Transfer
+                          </button>
+                          <button onClick={() => { setEditingProduct(p); setName(p.name); setPrice(p.price); setCostPrice(p.cost_price); setQuantity(p.quantity); setBatch(p.batch_reference); setProductBranch(p.branch_id || 'HQ'); }} className="text-blue-600 hover:text-blue-800"><Pencil className="w-4 h-4 inline" /></button>
                         </td>
                       </tr>
                     ))}
@@ -433,7 +360,48 @@ export default function AdminApp({ currentUser, supabase }) {
           </div>
         )}
 
-        {/* TAB 3: SALES LEDGER (Only operates on active branch context) */}
+        {/* --- TRANSFER MODAL OVERLAY --- */}
+        {transferModalOpen && transferProduct && (
+          <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden">
+              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                <h3 className="font-bold text-lg text-slate-900 flex items-center"><ArrowRightLeft className="w-5 h-5 mr-2 text-indigo-600"/> Transfer Stock</h3>
+                <button onClick={() => setTransferModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5"/></button>
+              </div>
+              <form onSubmit={executeStockTransfer} className="p-6 space-y-5">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+                  <p className="text-sm text-slate-500 mb-1">Transferring Item:</p>
+                  <p className="font-bold text-slate-900">{transferProduct.name} <span className="text-indigo-600 text-sm">({transferProduct.batch_reference})</span></p>
+                  <p className="text-sm font-medium mt-2">Available: <span className="text-emerald-600">{transferProduct.quantity} units</span></p>
+                </div>
+                
+                <div>
+                  <label className="text-sm font-semibold text-slate-700 block mb-2">Destination Branch</label>
+                  <select value={transferToBranch} onChange={e => setTransferToBranch(e.target.value)} className="w-full border border-slate-300 p-3 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" required>
+                    <option value="">-- Select Destination --</option>
+                    {(!transferProduct.branch_id || transferProduct.branch_id === 'HQ') ? null : <option value="HQ">Headquarters (HQ)</option>}
+                    {branches.filter(b => b.id !== transferProduct.branch_id).map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold text-slate-700 block mb-2">Quantity to Transfer</label>
+                  <input type="number" max={transferProduct.quantity} value={transferQty} onChange={e => setTransferQty(e.target.value)} className="w-full border border-slate-300 p-3 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" required />
+                </div>
+
+                <div className="pt-2">
+                  <button type="submit" className="w-full bg-indigo-600 text-white py-3.5 rounded-xl font-bold text-sm hover:bg-indigo-700 transition-colors shadow-sm">
+                    Confirm Transfer
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 3: SALES LEDGER / BUY & SALE (Passes strict branch context) */}
         {activeTab === 'customers' && (
           <SalesLedger 
             products={contextProducts}
@@ -442,72 +410,58 @@ export default function AdminApp({ currentUser, supabase }) {
             fetchCustomers={fetchCustomersFromSupabase}
             supabase={supabase}
             currentUser={currentUser}
-            activeBranchId={activeBranchId} // Ensure SalesLedger uses this when creating new orders/customers
+            activeBranchId={activeBranchId} 
           />
         )}
-
-        {/* TAB 4: STOREFRONT PREVIEW */}
-        {isAdmin && activeTab === 'storefront' && (
-          <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm space-y-6">
-            <h3 className="font-black text-sm uppercase">Aperçu Front-Page</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-              {frontPageProducts.map(p => (
-                <div key={p.id} className="border rounded-xl p-4 bg-white shadow-xs">
-                  <span className="bg-indigo-100 text-indigo-800 text-[9px] font-bold px-2 py-0.5 rounded mb-2 block w-fit">
-                    {branches.find(b => b.id === p.branch_id)?.name || 'HQ'}
-                  </span>
-                  <img src={p.image_url} alt="" className="w-full h-40 object-cover rounded-lg mb-2" />
-                  <h4 className="font-black text-sm leading-tight">{p.name}</h4>
-                  <div className="mt-3 flex justify-between items-center border-t pt-2">
-                    <span className="font-black text-orange-600 text-sm">{p.price?.toLocaleString()} FCFA</span>
-                    <span className="text-[11px] font-bold text-green-600 bg-green-50 px-2 py-1 rounded">Stock: {p.quantity}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
+        
         {/* TAB 5: STAFF MANAGEMENT */}
         {isAdmin && activeTab === 'staff' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm h-fit">
-              <h3 className="font-bold text-xs uppercase text-gray-700 mb-4 border-b pb-2">{editingStaff ? 'Modifier Staff' : 'Nouveau Staff'}</h3>
-              <form onSubmit={handleSaveStaff} className="space-y-3.5">
-                <div><label className="text-[10px] font-bold block">Nom Complet</label><input type="text" value={staffName} onChange={e => setStaffName(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg" required /></div>
-                <div><label className="text-[10px] font-bold block">Code PIN</label><input type="text" value={staffPin} onChange={e => setStaffPin(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg" required /></div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm h-fit">
+              <h3 className="font-bold text-base text-slate-800 mb-6 pb-4 border-b border-slate-100">{editingStaff ? 'Edit Staff Profile' : 'Register New Staff'}</h3>
+              <form onSubmit={handleSaveStaff} className="space-y-4">
+                <div><label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">Full Name</label><input type="text" value={staffName} onChange={e => setStaffName(e.target.value)} className="w-full border border-slate-300 p-3 text-sm rounded-xl focus:ring-2 focus:ring-slate-900 outline-none" required /></div>
+                <div><label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">Security PIN</label><input type="text" value={staffPin} onChange={e => setStaffPin(e.target.value)} className="w-full border border-slate-300 p-3 text-sm rounded-xl focus:ring-2 focus:ring-slate-900 outline-none" required /></div>
                 <div>
-                  <label className="text-[10px] font-bold block">Assignation (Succursale)</label>
-                  <select value={staffBranch} onChange={e => setStaffBranch(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg">
-                    <option value="">-- Accès Global (Pas de succursale fixe) --</option>
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">Branch Assignment</label>
+                  <select value={staffBranch} onChange={e => setStaffBranch(e.target.value)} className="w-full border border-slate-300 p-3 text-sm rounded-xl focus:ring-2 focus:ring-slate-900 outline-none">
+                    <option value="">Global Access (Headquarters)</option>
                     {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="text-[10px] font-bold block">Rôle</label>
-                  <select value={staffRole} onChange={e => setStaffRole(e.target.value)} className="w-full border p-2.5 text-xs rounded-lg"><option value="staff">Vendeur</option><option value="admin">Admin</option></select>
+                  <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 block">System Role</label>
+                  <select value={staffRole} onChange={e => setStaffRole(e.target.value)} className="w-full border border-slate-300 p-3 text-sm rounded-xl focus:ring-2 focus:ring-slate-900 outline-none">
+                    <option value="staff">Sales Rep</option><option value="admin">Administrator</option>
+                  </select>
                 </div>
-                <button type="submit" className="w-full bg-[#f68b1e] text-white py-3 text-xs rounded-lg font-bold uppercase">{editingStaff ? 'Mettre à jour' : 'Créer'}</button>
+                <button type="submit" className="w-full bg-slate-900 text-white py-4 text-sm rounded-xl font-bold mt-2 hover:bg-slate-800 transition-colors">{editingStaff ? 'Update Profile' : 'Create Profile'}</button>
               </form>
             </div>
-            <div className="lg:col-span-2 bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
-              <h3 className="font-bold text-xs uppercase text-gray-700 pb-3 border-b">Liste du Personnel</h3>
-              <table className="w-full text-left text-xs mt-3">
-                <thead><tr className="bg-gray-50 text-gray-400 font-bold border-b"><th className="p-2.5">Nom</th><th className="p-2.5">Succursale</th><th className="p-2.5">Rôle</th><th className="p-2.5 text-center">Actions</th></tr></thead>
-                <tbody>
-                  {staffList.map(s => (
-                    <tr key={s.id} className="hover:bg-gray-50/50 border-b">
-                      <td className="p-2.5 font-bold">{s.full_name}</td>
-                      <td className="p-2.5 font-bold text-indigo-600">{branches.find(b => b.id === s.branch_id)?.name || 'Toutes (HQ)'}</td>
-                      <td className="p-2.5">{s.role}</td>
-                      <td className="p-2.5 text-center space-x-2">
-                        <button onClick={() => { if(!verifyAdminPinBeforeAction()) return; setEditingStaff(s); setStaffName(s.full_name); setStaffPin(s.pin_code); setStaffRole(s.role); setStaffBranch(s.branch_id || ''); }} className="text-blue-500 font-bold">Éditer</button>
-                        <button onClick={() => handleToggleStaffStatus(s.id, s.is_active)} className={`font-bold ${s.is_active ? 'text-red-500' : 'text-green-600'}`}>{s.is_active ? 'Désactiver' : 'Activer'}</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            
+            <div className="lg:col-span-2 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+              <h3 className="font-bold text-base text-slate-800 pb-4 border-b border-slate-100">Team Directory</h3>
+              <div className="overflow-x-auto mt-2">
+                <table className="w-full text-left text-sm whitespace-nowrap">
+                  <thead><tr className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200"><th className="p-4 rounded-tl-xl">Name</th><th className="p-4">Location</th><th className="p-4">Role</th><th className="p-4 text-right rounded-tr-xl">Actions</th></tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {staffList.map(s => (
+                      <tr key={s.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="p-4 font-bold text-slate-900 flex items-center gap-2">
+                          {s.is_active && <CheckCircle2 className="w-4 h-4 text-emerald-500"/>} {s.full_name}
+                        </td>
+                        <td className="p-4 font-medium text-slate-600">
+                          <span className="bg-slate-100 px-3 py-1 rounded-full text-xs">{branches.find(b => b.id === s.branch_id)?.name || 'Headquarters'}</span>
+                        </td>
+                        <td className="p-4 capitalize text-slate-500">{s.role}</td>
+                        <td className="p-4 text-right space-x-3">
+                          <button onClick={() => { if(!verifyAdminPinBeforeAction()) return; setEditingStaff(s); setStaffName(s.full_name); setStaffPin(s.pin_code); setStaffRole(s.role); setStaffBranch(s.branch_id || ''); }} className="text-blue-600 font-medium hover:underline">Edit</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
