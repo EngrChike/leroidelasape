@@ -14,7 +14,7 @@ export default function AdminApp({ currentUser, supabase }) {
   const [branches, setBranches] = useState([]);
   
   // Branch Context Filters
-  const [viewingBranch, setViewingBranch] = useState('ALL'); // HQ Dashboard Filter
+  const [viewingBranch, setViewingBranch] = useState(''); // Default to '' (HQ Main Stock) instead of 'ALL'
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('ALL');
   const [showArchived, setShowArchived] = useState(false);
 
@@ -48,7 +48,7 @@ export default function AdminApp({ currentUser, supabase }) {
   const [transferData, setTransferData] = useState({ sourceProduct: null, targetBranchId: '', quantity: '' });
 
   // Determine active branch context (Admin sees what they filter, Staff sees only their branch)
-  const activeBranchId = isAdmin ? viewingBranch : (currentUser?.branch_id || 'ALL');
+  const activeBranchId = isAdmin ? viewingBranch : (currentUser?.branch_id || '');
 
   useEffect(() => {
     fetchBranchesFromSupabase();
@@ -241,7 +241,7 @@ export default function AdminApp({ currentUser, supabase }) {
       const existingTargetProd = products.find(p => 
         p.name.trim().toLowerCase() === sourceProduct.name.trim().toLowerCase() && 
         p.batch_reference === sourceProduct.batch_reference && 
-        String(p.branch_id) === String(targetBranchId)
+        String(p.branch_id || '') === String(targetBranchId)
       );
 
       if (existingTargetProd) {
@@ -291,8 +291,9 @@ export default function AdminApp({ currentUser, supabase }) {
   };
 
   // ---- CONTEXT FILTERING FOR DASHBOARD & METRICS ----
-  const contextProducts = products.filter(p => activeBranchId === 'ALL' || String(p.branch_id) === String(activeBranchId));
-  const contextCustomers = customers.filter(c => activeBranchId === 'ALL' || String(c.branch_id) === String(activeBranchId));
+  // Fixed filtering logic to correctly treat null values as HQ Main Stock ('')
+  const contextProducts = products.filter(p => activeBranchId === 'ALL' || String(p.branch_id || '') === String(activeBranchId));
+  const contextCustomers = customers.filter(c => activeBranchId === 'ALL' || String(c.branch_id || '') === String(activeBranchId));
 
   const getProductSoldQty = (productId) => {
     return contextCustomers.reduce((acc, c) => acc + (c.history || []).reduce((hAcc, h) => {
@@ -345,9 +346,9 @@ export default function AdminApp({ currentUser, supabase }) {
               <div className="flex items-center gap-2 border border-gray-200 px-4 py-2 rounded-lg bg-gray-50 shadow-sm">
                 <Filter className="w-4 h-4 text-gray-500" />
                 <select value={viewingBranch} onChange={(e) => setViewingBranch(e.target.value)} className="bg-transparent text-sm font-semibold text-gray-800 outline-none cursor-pointer">
+                  <option value="">HQ Main Stock (Default)</option>
                   <option value="ALL">Global View (All Branches)</option>
-                  <option value="" disabled>──────────</option>
-                  <option value="">HQ Main Stock</option>
+                  <option value="divider" disabled>──────────</option>
                   {branches.map(b => <option key={b.id} value={b.id}>View: {b.name}</option>)}
                 </select>
               </div>
