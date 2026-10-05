@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, Users, Eye, Pencil, Archive, RotateCcw, X, Layers, UserCog, Key, Store, MapPin, Filter, ArrowRightLeft, Send, Check, AlertCircle, ArrowRight } from 'lucide-react';
+import { Package, Users, Eye, Pencil, Archive, RotateCcw, X, Layers, UserCog, Key, Store, MapPin, Filter, ArrowRightLeft, Send, Check, AlertCircle, ArrowRight, Store as StoreIcon } from 'lucide-react';
 import SalesLedger from './SalesLedger';
 
 export default function AdminApp({ currentUser, supabase }) {
@@ -17,6 +17,10 @@ export default function AdminApp({ currentUser, supabase }) {
   const [viewingBranch, setViewingBranch] = useState(''); // Default to '' (HQ Main Stock) instead of 'ALL'
   const [selectedBatchFilter, setSelectedBatchFilter] = useState('ALL');
   const [showArchived, setShowArchived] = useState(false);
+
+  // Storefront Specific Branch Filter State (Default to HQ '')
+  const [storefrontBranch, setStorefrontBranch] = useState('');
+  const [storefrontModalOpen, setStorefrontModalOpen] = useState(false);
 
   // Branch form states
   const [branchName, setBranchName] = useState('');
@@ -401,7 +405,15 @@ export default function AdminApp({ currentUser, supabase }) {
     return matchesBatch && matchesArchiveState;
   });
 
-  const frontPageProducts = contextProducts.filter(p => !p.is_archived && parseInt(p.quantity) >= 1);
+  // Storefront filtered products based on storefrontBranch (Default HQ)
+  const storefrontFilteredProducts = products.filter(p => {
+    if (p.is_archived || parseInt(p.quantity) < 1) return false;
+    if (storefrontBranch === '') {
+      return !p.branch_id || p.branch_id === '';
+    }
+    return String(p.branch_id || '') === String(storefrontBranch);
+  });
+
   const hqProductsForTransfer = products.filter(p => (!p.branch_id || p.branch_id === '') && !p.is_archived && parseInt(p.quantity) > 0);
   const activeSelectedArray = Object.values(selectedBatchItems).filter(i => i.selected);
 
@@ -635,23 +647,48 @@ export default function AdminApp({ currentUser, supabase }) {
         {/* TAB 4: STOREFRONT PREVIEW */}
         {isAdmin && activeTab === 'storefront' && (
           <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm space-y-6">
-            <h3 className="font-bold text-sm uppercase text-gray-800 border-b pb-3">Storefront Display</h3>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 pb-4 border-b border-gray-200">
+              <div>
+                <h3 className="font-bold text-sm uppercase text-gray-800 flex items-center space-x-2">
+                  <StoreIcon className="w-4 h-4 text-indigo-600" />
+                  <span>Storefront Display Catalogue</span>
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Affichage actuel : <span className="font-bold text-black">{storefrontBranch === '' ? 'Headquarter (HQ Main Stock)' : (branches.find(b => b.id === storefrontBranch)?.name || 'Succursale')}</span>
+                </p>
+              </div>
+
+              <button 
+                onClick={() => setStorefrontModalOpen(true)}
+                className="bg-zinc-900 hover:bg-black text-white text-xs font-bold px-4 py-2.5 rounded-xl flex items-center space-x-2 shadow-xs transition-all"
+              >
+                <Store className="w-4 h-4 text-indigo-400" />
+                <span>Choisir la Succursale (Storefront)</span>
+              </button>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-5">
-              {frontPageProducts.map(p => (
-                <div key={p.id} className="border border-gray-100 rounded-xl p-4 bg-white shadow-sm hover:shadow-md transition-all flex flex-col h-full">
-                  <span className="bg-blue-50 text-blue-700 border border-blue-100 text-[10px] font-bold px-2.5 py-1 rounded-full mb-3 block w-fit">
-                    {branches.find(b => b.id === p.branch_id)?.name || 'HQ Main'}
-                  </span>
-                  <img src={p.image_url} alt="" className="w-full h-40 object-cover rounded-lg mb-4" />
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-gray-900 text-sm leading-tight">{p.name}</h4>
-                  </div>
-                  <div className="mt-4 flex justify-between items-end border-t border-gray-100 pt-3">
-                    <span className="font-bold text-emerald-600 text-sm">{p.price?.toLocaleString()} FCFA</span>
-                    <span className="text-[11px] font-semibold text-gray-600 bg-gray-50 border border-gray-200 px-2.5 py-1 rounded-md">Qty: {p.quantity}</span>
-                  </div>
+              {storefrontFilteredProducts.length === 0 ? (
+                <div className="col-span-full py-16 text-center bg-gray-50 rounded-xl border border-dashed border-gray-200">
+                  <p className="text-gray-400 text-xs font-semibold">Aucun produit disponible dans cette succursale pour le moment.</p>
                 </div>
-              ))}
+              ) : (
+                storefrontFilteredProducts.map(p => (
+                  <div key={p.id} className="border border-gray-100 rounded-xl p-4 bg-white shadow-sm hover:shadow-md transition-all flex flex-col h-full">
+                    <span className="bg-blue-50 text-blue-700 border border-blue-100 text-[10px] font-bold px-2.5 py-1 rounded-full mb-3 block w-fit">
+                      {branches.find(b => b.id === p.branch_id)?.name || 'HQ Main'}
+                    </span>
+                    <img src={p.image_url} alt="" className="w-full h-40 object-cover rounded-lg mb-4" />
+                    <div className="flex-1">
+                      <h4 className="font-semibold text-gray-900 text-sm leading-tight">{p.name}</h4>
+                    </div>
+                    <div className="mt-4 flex justify-between items-end border-t border-gray-100 pt-3">
+                      <span className="font-bold text-emerald-600 text-sm">{p.price?.toLocaleString()} FCFA</span>
+                      <span className="text-[11px] font-semibold text-gray-600 bg-gray-50 border border-gray-200 px-2.5 py-1 rounded-md">Qty: {p.quantity}</span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         )}
@@ -716,6 +753,69 @@ export default function AdminApp({ currentUser, supabase }) {
           </div>
         )}
       </div>
+
+      {/* STOREFRONT BRANCH SELECTOR MODAL */}
+      {storefrontModalOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="bg-zinc-900 text-white px-6 py-4 flex justify-between items-center border-b border-zinc-800">
+              <h3 className="text-sm font-black uppercase tracking-tight flex items-center space-x-2">
+                <Store className="w-4 h-4 text-indigo-400" />
+                <span>Sélectionner la Succursale Storefront</span>
+              </h3>
+              <button onClick={() => setStorefrontModalOpen(false)} className="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-3">
+              <p className="text-xs text-gray-500 mb-2">
+                Choisissez quelle succursale ou le QG afficher sur la page d'accueil de la vitrine (Storefront).
+              </p>
+
+              {/* Headquarter Option */}
+              <div 
+                onClick={() => setStorefrontBranch('')}
+                className={`p-4 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
+                  storefrontBranch === '' ? 'border-indigo-600 bg-indigo-50/40 shadow-xs' : 'border-gray-200 bg-white hover:bg-gray-50'
+                }`}
+              >
+                <div>
+                  <h4 className="text-xs font-extrabold text-black uppercase">Headquarter (HQ Main Stock)</h4>
+                  <p className="text-[11px] text-gray-500 mt-0.5">Par défaut (Stock principal du QG)</p>
+                </div>
+                {storefrontBranch === '' && <Check className="w-5 h-5 text-indigo-600" />}
+              </div>
+
+              {/* Branch Options */}
+              {branches.map(b => (
+                <div 
+                  key={b.id}
+                  onClick={() => setStorefrontBranch(b.id)}
+                  className={`p-4 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${
+                    String(storefrontBranch) === String(b.id) ? 'border-indigo-600 bg-indigo-50/40 shadow-xs' : 'border-gray-200 bg-white hover:bg-gray-50'
+                  }`}
+                >
+                  <div>
+                    <h4 className="text-xs font-extrabold text-black uppercase">{b.name}</h4>
+                    <p className="text-[11px] text-gray-500 mt-0.5">{b.location || 'Succursale'}</p>
+                  </div>
+                  {String(storefrontBranch) === String(b.id) && <Check className="w-5 h-5 text-indigo-600" />}
+                </div>
+              ))}
+            </div>
+
+            <div className="bg-gray-50 px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button 
+                onClick={() => setStorefrontModalOpen(false)}
+                className="bg-black hover:bg-zinc-800 text-white px-5 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
+              >
+                Appliquer (OK)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MULTI-PRODUCT BATCH TRANSFER MODAL */}
       {batchTransferOpen && (
