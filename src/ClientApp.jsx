@@ -23,37 +23,51 @@ export default function ClientApp() {
 
   const fetchActiveBranchAndProducts = async () => {
     setIsLoading(true);
-    let activeBranch = 'Siège Principal'; // Default fallback
+    let activeBranchName = 'Siège Principal'; // Default fallback
 
     try {
-      // 1. Use .maybeSingle() so it doesn't error out if the store_settings table is empty
+      // 1. Fetch active branch name from store_settings
       const { data: settingsData, error: settingsError } = await supabase
         .from('store_settings')
         .select('active_branch')
         .maybeSingle();
 
       if (!settingsError && settingsData && settingsData.active_branch) {
-        activeBranch = settingsData.active_branch;
+        activeBranchName = settingsData.active_branch;
       }
     } catch (err) {
       console.log("No store settings found, defaulting to Siège Principal.");
     }
 
-    setStoreBranch(activeBranch);
+    setStoreBranch(activeBranchName);
 
     try {
-      // 2. Fetch products for this specific active branch safely
+      // 2. Fetch all branches to map branch names to their respective IDs
+      const { data: branchesData } = await supabase
+        .from('branches')
+        .select('id, name');
+
+      const branchesList = branchesData || [];
+
+      // 3. Build products query using branch_id
       let query = supabase
         .from('products')
         .select('*')
         .eq('is_archived', false)
         .gt('quantity', 0);
 
-      if (activeBranch === 'Siège Principal') {
-        // Fallback: match 'Siège Principal' or rows where branch might be unassigned (null/empty)
-        query = query.or(`branch.eq.Siège Principal,branch.is.null,branch.eq.`);
+      if (activeBranchName === 'Siège Principal') {
+        // HQ main stock products have a null branch_id
+        query = query.is('branch_id', null);
       } else {
-        query = query.eq('branch', activeBranch);
+        // Find the branch ID matching the active branch name
+        const matchedBranch = branchesList.find(b => b.name === activeBranchName);
+        if (matchedBranch) {
+          query = query.eq('branch_id', matchedBranch.id);
+        } else {
+          // Fallback if branch name doesn't match any record
+          query = query.eq('branch_id', 'non-existent-id');
+        }
       }
 
       const { data, error } = await query.order('created_at', { ascending: false });
@@ -111,7 +125,7 @@ export default function ClientApp() {
     if (cart.length === 0) return;
     let msg = `✨ *Leroide La Sape - NOUVELLE COMMANDE (${storeBranch})* ✨\n------------------------------------------\n\n`;
     cart.forEach((item, idx) => {
-      msg += `🛍️ *${idx + 1}. ${item.name}*\n  Prix: ${item.price.toLocaleString()} FCFA\n  Qté: ${item.quantity}\n------------------------------------------\n`;
+      msg += `🛍️️ *${idx + 1}. ${item.name}*\n  Prix: ${item.price.toLocaleString()} FCFA\n  Qté: ${item.quantity}\n------------------------------------------\n`;
     });
     msg += `\n🎯 *TOTAL GÉNÉRAL:* ${cartTotal.toLocaleString()} FCFA\n\nMerci de confirmer la disponibilité pour expédition immédiate !`;
     window.open(`https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(msg)}`, '_blank');

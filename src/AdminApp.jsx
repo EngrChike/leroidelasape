@@ -33,8 +33,8 @@ export default function AdminApp({ currentUser, supabase }) {
   });
   const [storefrontModalOpen, setStorefrontModalOpen] = useState(false);
   
-  // NEW: Live Public Storefront Control State
-  const [liveStoreBranch, setLiveStoreBranch] = useState('Siège Principal');
+  // Live Public Storefront Control State (stores branch_id or '' for HQ)
+  const [liveStoreBranch, setLiveStoreBranch] = useState('');
 
   useEffect(() => {
     localStorage.setItem('donchike_storefront_branch', storefrontBranch);
@@ -88,7 +88,7 @@ export default function AdminApp({ currentUser, supabase }) {
     fetchCustomersFromSupabase();
     if (isAdmin) {
       fetchStaffFromSupabase();
-      fetchStoreSettings(); // NEW: Fetch global settings
+      fetchStoreSettings(); 
     }
   }, [isAdmin, activeTab]);
 
@@ -100,7 +100,7 @@ export default function AdminApp({ currentUser, supabase }) {
     }
   }, [viewingBranch]);
 
-  // --- NEW: FETCH GLOBAL STORE SETTINGS ---
+  // --- FETCH GLOBAL STORE SETTINGS ---
   const fetchStoreSettings = async () => {
     try {
       const { data, error } = await supabase
@@ -108,25 +108,27 @@ export default function AdminApp({ currentUser, supabase }) {
         .select('active_branch')
         .single();
       
-      if (data && data.active_branch) {
-        setLiveStoreBranch(data.active_branch);
+      if (data) {
+        setLiveStoreBranch(data.active_branch || '');
       }
     } catch (err) {
       console.log("Paramètres de la boutique non configurés (normal au premier lancement).");
     }
   };
 
-  // --- NEW: UPDATE LIVE STOREFRONT ---
-  const handleUpdateLiveBranch = async (newBranch) => {
+  // --- UPDATE LIVE STOREFRONT (Saves branch_id or '' for HQ) ---
+  const handleUpdateLiveBranch = async (newBranchId) => {
     if (!verifyAdminPinBeforeAction()) return;
     try {
       const { error } = await supabase
         .from('store_settings')
-        .upsert({ id: 1, active_branch: newBranch }, { onConflict: 'id' });
+        .upsert({ id: 1, active_branch: newBranchId }, { onConflict: 'id' });
       
       if (error) throw error;
-      setLiveStoreBranch(newBranch);
-      alert(`Succès ! L'application client affiche maintenant les stocks de : ${newBranch}`);
+      setLiveStoreBranch(newBranchId);
+      const branchObj = branches.find(b => b.id === newBranchId);
+      const branchDisplayName = branchObj ? branchObj.name : 'Siège Principal';
+      alert(`Succès ! L'application client affiche maintenant les stocks de : ${branchDisplayName}`);
     } catch (err) {
       alert(`Erreur lors de la mise à jour : ${err.message}`);
     }
@@ -208,7 +210,6 @@ export default function AdminApp({ currentUser, supabase }) {
       if (verifyAdminPinBeforeAction()) {
         setShowFinancials(true);
         if (autoHideTimerRef.current) clearTimeout(autoHideTimerRef.current);
-        // Automatically hide financial numbers after 10 minutes (600,000 ms)
         autoHideTimerRef.current = setTimeout(() => {
           setShowFinancials(false);
         }, 10 * 60 * 1000);
@@ -269,7 +270,7 @@ export default function AdminApp({ currentUser, supabase }) {
     }
   };
 
-  // --- STAFF HANDLERS (WITH ADMIN PIN SECURITY) ---
+  // --- STAFF HANDLERS ---
   const handleStartEditStaff = (staffMember) => {
     if (!verifyAdminPinBeforeAction()) return;
     setEditingStaff(staffMember);
@@ -519,7 +520,7 @@ export default function AdminApp({ currentUser, supabase }) {
     setProducts(prev => prev.map(p => String(p.id) === String(id) ? { ...p, is_archived: archiveState } : p));
   };
 
-  // ---- CONTEXT FILTERING & ROBUST FINANCIAL CALCULATION ----
+  // ---- CONTEXT FILTERING & FINANCIAL CALCULATION ----
   const contextProducts = products.filter(p => {
     if (activeBranchId === 'ALL' || activeBranchId === '') return true;
     return String(p.branch_id || '') === String(activeBranchId);
@@ -547,7 +548,6 @@ export default function AdminApp({ currentUser, supabase }) {
     return (parseInt(p.quantity) || 0) + getProductSoldQty(p.id);
   };
 
-  // Financial Metrics Calculations
   const totalInventoryCost = contextProducts.reduce((acc, p) => acc + ((parseFloat(p.cost_price) || 0) * getTrueInitialQty(p)), 0);
   const totalExpectedRevenue = contextProducts.reduce((acc, p) => acc + ((parseFloat(p.price) || 0) * getTrueInitialQty(p)), 0);
   const totalPotentialRetail = contextProducts.filter(p => !p.is_archived).reduce((acc, p) => acc + ((parseFloat(p.price) || 0) * (parseInt(p.quantity) || 0)), 0);
@@ -622,7 +622,7 @@ export default function AdminApp({ currentUser, supabase }) {
           </div>
         )}
 
-        {/* FINANCIAL METRICS WITH PRIVACY MASKING & 10-MIN TIMEOUT */}
+        {/* FINANCIAL METRICS */}
         {isAdmin && (
           <div className="space-y-3">
             <div className="flex justify-between items-center px-1">
@@ -748,7 +748,7 @@ export default function AdminApp({ currentUser, supabase }) {
         {isAdmin && activeTab === 'storefront' && (
           <div className="space-y-6">
             
-            {/* NEW: LIVE STORE CONFIGURATION CARD */}
+            {/* LIVE STORE CONFIGURATION CARD */}
             <div className="bg-white p-5 sm:p-6 rounded-xl border-2 border-emerald-500/20 shadow-sm bg-gradient-to-r from-emerald-50/50 to-white">
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <div>
@@ -768,9 +768,9 @@ export default function AdminApp({ currentUser, supabase }) {
                        onChange={(e) => handleUpdateLiveBranch(e.target.value)}
                        className="text-sm font-bold text-gray-900 bg-transparent outline-none cursor-pointer w-full mt-0.5"
                      >
-                       <option value="Siège Principal">Siège Principal (HQ)</option>
+                       <option value="">Siège Principal (HQ)</option>
                        {branches.map(b => (
-                         <option key={b.id} value={b.name}>{b.name}</option>
+                         <option key={b.id} value={b.id}>{b.name}</option>
                        ))}
                      </select>
                    </div>
@@ -778,7 +778,7 @@ export default function AdminApp({ currentUser, supabase }) {
               </div>
             </div>
 
-            {/* EXISTING STOREFRONT PREVIEW COMPONENT (UPDATED WITH LIVE PROPS) */}
+            {/* STOREFRONT PREVIEW COMPONENT */}
             <StorefrontPreview 
               branches={branches}
               storefrontBranch={storefrontBranch}
