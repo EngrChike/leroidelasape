@@ -151,11 +151,85 @@ export default function ClientApp() {
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center space-x-2.5 cursor-pointer shrink-0 group select-none" onClick={() => setSearchTerm('')}>
             <div className="w-9 h-9 sm:w-10 sm:h-10 bg-gradient-to-br from-amber-500 via-orange-500 to-amber-600 rounded-xl flex items-center justify-center shadow-md p-1.5">
-              <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className="w-full h-full text-white">
-                <path d="M30 25 C30 25, 45 15, 50 15 C55 15, 70 25, 70 25 C70 45, 60 75, 50 85 C40 75, 30 45, 30 25 Z" stroke="currentColor" strokeWidth="6" strokeLinecap="round" strokeLinejoin="round" />
-                <circle cx="50" cy="42" r="7" fill="currentColor" />
-                <path d="M40 60 C45 65, 55 65, 60 60" stroke="currentColor" strokeWidth="6" strokeLinecap="round" />
-              </svg>
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    
+    <linearGradient id="darkBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A0A0C" />
+      <stop offset="100%" stop-color="#1A1A22" />
+    </linearGradient>
+
+    
+    <linearGradient id="goldGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FDE047" />
+      <stop offset="30%" stop-color="#EAB308" />
+      <stop offset="70%" stop-color="#CA8A04" />
+      <stop offset="100%" stop-color="#854D0E" />
+    </linearGradient>
+
+    
+    <linearGradient id="goldLight" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FEF08A" />
+      <stop offset="100%" stop-color="#EAB308" />
+    </linearGradient>
+
+    
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  
+  <rect width="512" height="512" rx="112" fill="url(#darkBg)" />
+  
+  
+  <rect width="488" height="488" x="12" y="12" rx="100" fill="none" stroke="url(#goldGradient)" stroke-width="4" opacity="0.6" />
+  <rect width="468" height="468" x="22" y="22" rx="90" fill="none" stroke="url(#goldGradient)" stroke-width="2" opacity="0.3" />
+
+  
+  <g transform="translate(256, 125) scale(0.85)" filter="url(#glow)">
+   
+    <path d="M -90 40 Q 0 55 90 40 L 75 55 Q 0 70 -75 55 Z" fill="url(#goldLight)" />
+   
+    <path d="M -90 35 L -110 -35 L -50 5 L 0 -65 L 50 5 L 110 -35 L 90 35 Q 0 50 -90 35 Z" fill="url(#goldGradient)" />
+    
+    <circle cx="-110" cy="-45" r="10" fill="url(#goldLight)" />
+    <circle cx="0" cy="-75" r="13" fill="url(#goldLight)" />
+    <circle cx="110" cy="-45" r="10" fill="url(#goldLight)" />
+  </g>
+
+
+  <text 
+    x="256" 
+    y="335" 
+    text-anchor="middle" 
+    fill="url(#goldGradient)" 
+    font-family="'Cinzel', 'Playfair Display', 'Georgia', 'Times New Roman', serif" 
+    font-size="135" 
+    font-weight="900" 
+    letter-spacing="6"
+    filter="url(#glow)"
+  >LDS</text>
+
+  
+  <path d="M 130 380 L 230 380 L 256 392 L 282 380 L 382 380" stroke="url(#goldGradient)" stroke-width="4" fill="none" stroke-linecap="round" />
+  <circle cx="256" cy="392" r="5" fill="url(#goldLight)" />
+
+  
+  <text 
+    x="256" 
+    y="435" 
+    text-anchor="middle" 
+    fill="url(#goldLight)" 
+    font-family="'Montserrat', 'Arial', sans-serif" 
+    font-size="22" 
+    font-weight="800" 
+    letter-spacing="10" 
+    opacity="0.9"
+  >LEROIDE LA SAPE</text>
+</svg>
+
             </div>
             <div className="flex flex-col justify-center">
               <span className="font-black text-base sm:text-xl tracking-wider uppercase text-zinc-900 leading-none group-hover:text-amber-600 transition-colors">Leroide </span>
